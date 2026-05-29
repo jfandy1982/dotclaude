@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/packages/cspell-types/cspell.schema.json",
+  "version": "0.2",
+  "language": "en-US,de-DE",
+  "dictionaries": ["en-common-misspellings", "npm", "lorem-ipsum"],
+  "files": ["**/{*,.*}/**/*.*"],
+  "flagWords": [],
+  "ignorePaths": [
+    "**/.git/**",
+    "**/.github/agents/**",
+    "**/.github/prompts/**",
+    "**/.github/skills/**",
+    "**/.husky/**",
+    "**/.vscode/**",
+    ".cspell.json",
+    ".gitignore",
+    "package-lock.json"
+  ],
+  "import": ["@cspell/dict-de-de/cspell-ext.json"],
+  "loadDefaultConfiguration": true,
+  "useGitignore": true,
+  "ignoreWords": ["dotclaude", "jfandy1982"],
+  "words": []
+}

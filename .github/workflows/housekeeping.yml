@@ -1,0 +1,13 @@
+name: Housekeeping
+
+on:
+  schedule:
+    - cron: '43 04 * * 5'
+  workflow_dispatch:
+
+jobs:
+  retention:
+    uses: jfandy1982/shared-github-workflows/.github/workflows/reusable-retention-workflow-runs.yml@main
+    permissions:
+      actions: write
+      contents: read

@@ -1,0 +1,22 @@
+{
+  "name": "dotclaude",
+  "private": true,
+  "scripts": {
+    "format:all": "prettier --write .",
+    "format:all:check": "prettier --check .",
+    "prepare": "husky || true",
+    "spell:all:check": "cspell lint --dot --show-suggestions --no-progress --no-must-find-files --config ./.cspell.json .",
+    "spell:dict:search": "cspell trace --all --config ./.cspell.json",
+    "yaml:all:check": "find .github/workflows -name '*.yml' -exec js-yaml {} \\;"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.1.0",
+    "@commitlint/config-conventional": "^20.0.0",
+    "@cspell/dict-de-de": "^4.0.0",
+    "cspell": "^9.0.0",
+    "husky": "^9.0.0",
+    "js-yaml": "^4.1.1",
+    "lint-staged": "^16.0.0",
+    "prettier": "^3.0.0"
+  }
+}

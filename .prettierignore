@@ -1,0 +1,11 @@
+# Add files here to ignore them from prettier formatting
+
+# Dependencies
+**/node_modules/**
+**/package-lock.json
+
+# experiments / temporary workspace
+**/experiments/**
+
+# license file
+LICENSE.md

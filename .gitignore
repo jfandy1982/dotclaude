@@ -1,0 +1,27 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# dependencies
+node_modules
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# environment variables
+.env
+.env.local
+.env.*.local
+
+# experiments / temporary workspace
+experiments
+
+# Claude Code
+CLAUDE.local.md
+.claude/settings.local.json
+
+# System Files
+.DS_Store
+Thumbs.db
