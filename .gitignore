@@ -21,6 +21,9 @@ experiments
 # Claude Code
 CLAUDE.local.md
 .claude/settings.local.json
+.superpowers
+docs/superpowers
+docs/sdlc
 
 # System Files
 .DS_Store
