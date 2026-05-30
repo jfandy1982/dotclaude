@@ -19,6 +19,6 @@
   "import": ["@cspell/dict-de-de/cspell-ext.json"],
   "loadDefaultConfiguration": true,
   "useGitignore": true,
-  "ignoreWords": ["dotclaude", "jfandy1982", "sdlc"],
+  "ignoreWords": ["actionlint", "dotclaude", "jfandy1982", "sdlc"],
   "words": []
 }
