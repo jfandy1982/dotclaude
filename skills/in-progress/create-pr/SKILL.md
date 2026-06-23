@@ -95,12 +95,13 @@ Run these steps in this exact order.
 ### Step 1 — Gather branch context
 
 ```bash
+git branch --show-current
 git log <DEFAULT>..HEAD
 git diff <DEFAULT>..HEAD --name-only
 git diff <DEFAULT>..HEAD
 ```
 
-Read the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
+Read the branch name, the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
 
 ### Step 2 — Issue linking
 
@@ -222,11 +223,11 @@ Store the final label set as `<selected-labels>`.
 
 ### Step 5 — PR title
 
-Derive the title from the branch context gathered in Step 1 (commit messages, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git log`/`git diff`:
+Derive the title from the branch context gathered in Step 1 (branch name, commit messages, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git branch`/`git log`/`git diff`. All sources are weighted equally; none takes precedence by default.
 
-- Single commit → use that commit message verbatim as the title.
-- Multiple commits → determine the dominant conventional commit type using both signals together: count commit prefixes, and weigh that against what the changed files and diff content actually show (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone). Construct `<type>: <summary>`.
-- No clear dominant type even after weighing both signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, ask the author to provide the title.
+Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name (e.g. `feat/123-add-login` → `feat`, "add login"; `chore/update-2026-06` → `(2026-06)` qualifier). No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; a single commit's message should still pick up extra detail from the branch name, like a date or ticket ID, when present). Construct `<type>: <summary>`.
+
+No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, ask the author to provide the title.
 
 Use the AskUserQuestion tool to present the derived title and ask the author to confirm or edit it:
 
