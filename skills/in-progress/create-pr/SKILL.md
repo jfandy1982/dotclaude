@@ -95,12 +95,13 @@ Run these steps in this exact order.
 ### Step 1 — Gather branch context
 
 ```bash
+git branch --show-current
 git log <DEFAULT>..HEAD
 git diff <DEFAULT>..HEAD --name-only
 git diff <DEFAULT>..HEAD
 ```
 
-Read the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
+Read the branch name, the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
 
 ### Step 2 — Issue linking
 
@@ -180,7 +181,7 @@ gh label list --json name --limit 30
 - If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
 - If no `type:`/`aspect:` labels exist → use all repo labels unfiltered. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
 
-**Inference:** From the branch context gathered in Step 1 (commit messages, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
+**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
 
 If a linked issue carries an `aspect:` label (from `<issue-context>`) that exists in the fetched label list, infer it as the suggested `aspect:` label for Sub-step 4b. No other `aspect:` inference is attempted — without a linked issue carrying one, no `aspect:` label is inferred.
 
@@ -222,11 +223,11 @@ Store the final label set as `<selected-labels>`.
 
 ### Step 5 — PR title
 
-Derive the title from the branch context gathered in Step 1 (commit messages, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git log`/`git diff`:
+Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git branch`/`git log`/`git diff`. All sources are weighted equally; none takes precedence by default.
 
-- Single commit → use that commit message verbatim as the title.
-- Multiple commits → determine the dominant conventional commit type using both signals together: count commit prefixes, and weigh that against what the changed files and diff content actually show (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone). Construct `<type>: <summary>`.
-- No clear dominant type even after weighing both signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, ask the author to provide the title.
+Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
+
+No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, ask the author to provide the title.
 
 Use the AskUserQuestion tool to present the derived title and ask the author to confirm or edit it:
 
@@ -248,7 +249,7 @@ Store confirmed title as `<title>`.
 
 ### Step 6 — PR description (body)
 
-Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git log`/`git diff`:
+Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git log`/`git diff`:
 
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
 - **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue description(s). Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from either source, state that explicitly rather than inventing one.
