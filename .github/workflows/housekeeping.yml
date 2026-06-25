@@ -11,3 +11,8 @@ jobs:
     permissions:
       actions: write
       contents: read
+  stale-issues:
+    name: Mark Stale Issues
+    uses: jfandy1982/shared-github-workflows/.github/workflows/reusable-stale-issues.yml@main
+    permissions:
+      issues: write
