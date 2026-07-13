@@ -2,6 +2,13 @@
 
 Skills and Agents and Hooks and ... reusable for Claude Code.
 
+## Installation
+
+```
+/plugin marketplace add jfandy1982/dotclaude
+/plugin install dotclaude@jfandy1982-dotclaude
+```
+
 ## Contents
 
-- `skills/in-progress/` — skills under active development, not yet stable (see its [README](skills/in-progress/README.md))
+- `skills/` — see its [README](skills/README.md) for per-skill status (in-progress/stable/deprecated)

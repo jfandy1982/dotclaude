@@ -1,0 +1,11 @@
+{
+  "name": "jfandy1982-dotclaude",
+  "owner": { "name": "jfandy1982" },
+  "plugins": [
+    {
+      "name": "dotclaude",
+      "source": "./",
+      "description": "Opinionated skills reusable for Claude code"
+    }
+  ]
+}
