@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "dotclaude",
-      "source": "./",
+      "source": "./plugin",
       "description": "Opinionated skills reusable for Claude code"
     }
   ]

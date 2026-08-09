@@ -11,4 +11,4 @@ Skills and Agents and Hooks and ... reusable for Claude Code.
 
 ## Contents
 
-- `skills/` — see its [README](skills/README.md) for per-skill status (in-progress/stable/deprecated)
+- `plugin/skills/` — see its [README](plugin/skills/README.md) for per-skill status (in-progress/stable/deprecated)
