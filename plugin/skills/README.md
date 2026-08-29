@@ -1,3 +1,3 @@
 # skills
 
-- `create-pr/` — in progress: handles PR preconditions, label selection, body assembly, and update flow
+- `create-pr/` — in progress: handles PR preconditions, silent file-risk/label/title/body inference with a single combined preview loop

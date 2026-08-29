@@ -13,10 +13,13 @@ Run in order. Stop on first failure. Do not output anything while running precon
 **Precondition 1 — Remote tracking branch**
 
 ```bash
+git branch --show-current
 git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null
 ```
 
-If no output → stop:
+Store the current branch name as `<branch>` — reuse in later steps, do not call `git branch --show-current` again.
+
+If no output from the second command → stop:
 
 > "Branch has no remote tracking branch. Push it first (`git push -u origin <branch>`) then re-run `/create-pr`."
 
@@ -51,11 +54,10 @@ If the output is non-empty → local is ahead of the remote (missing commits) �
 **Precondition 3 — Default-branch guard**
 
 ```bash
-git branch --show-current
 DEFAULT=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
 ```
 
-Store the current branch name as `<branch>` and the default branch name as `<DEFAULT>` — reuse both in later steps, do not call `git branch --show-current` or `gh repo view` again.
+Store the default branch name as `<DEFAULT>` — reuse in later steps, do not call `gh repo view` again. Reuse `<branch>` from Precondition 1 — do not call `git branch --show-current` again.
 
 If `<branch>` == `<DEFAULT>` → stop:
 
@@ -82,7 +84,7 @@ gh api user | jq -r '.login'
 
 - Non-zero exit → stop:
   > "Not authenticated with `<host>`. Run `gh auth login --hostname <host>` then re-run `/create-pr`."
-- Success → display:
+- Success → store the returned login as `<username>` and display:
   > "Authenticated with `<host>`. Assignee of new PR will be: `<username>`"
 
 Continue without asking for confirmation.
@@ -90,7 +92,7 @@ Continue without asking for confirmation.
 ## Mode Detection
 
 ```bash
-gh pr list --head "<branch>" --state open --json number,title
+gh pr list --head <branch> --state open --json number,title
 ```
 
 - Open PR found → **update mode is the only path**. (not yet implemented — stop with: "Update mode is not yet implemented.")
@@ -110,7 +112,7 @@ git diff <remote>/<DEFAULT>...HEAD
 
 Use `<remote>/<DEFAULT>` (not local `<DEFAULT>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<DEFAULT>`); `git diff` uses three dots (diff against the merge-base) so upstream changes on `<DEFAULT>` since the branch was cut don't show up as noise.
 
-Read `<branch>` (from Precondition 3), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
+Read `<branch>` (from Precondition 1), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
 
 ### Step 2 — Issue linking
 
@@ -151,9 +153,17 @@ Using the changed files list from Step 1 and `<issue-context>` from Step 2, clas
 
 Classify by what actually changed in the diff, not just the file name — e.g. a one-line version bump in a lockfile or config file stays Low/Medium as appropriate, while a substantial change to the same file may warrant a higher classification.
 
+Also weigh each file against the PR's overall intent, not just its own diff in isolation — the same file pair can rank differently depending on what the PR is actually about. In a dependency-update PR, `package.json` is the intentional change and outranks its lockfile, which is just the mechanical follow-on. In a feature PR that happens to add a dependency, the reverse holds — the lockfile (and often `package.json` itself) is a low-risk side effect, and the real risk sits in the feature code elsewhere in the diff. Derive the PR's overall intent from the branch context gathered in Step 1 (commit messages, branch name, dominant change) rather than reasoning about each file in a vacuum.
+
 When in doubt, classify up rather than down.
 
-Build a draft with one subsection per risk level, in order Critical → Medium → Low. Omit a subsection entirely if no file falls into that risk level. Files within a subsection are sorted alphabetically by path. Each file gets a one-line annotation (≤10 words) summarizing what changed in that file, derived from the diff content gathered in Step 1:
+#### Ranking
+
+Within a subsection, two files can share the same bucket but not the same severity — e.g. a DB migration and a service-layer wiring change can both be Critical, but the migration mutates persisted data and is hard to roll back, while the service change is contained and easy to revert with a follow-up PR. Order files within each subsection by that severity (irreversibility and blast radius first), falling back to alphabetical by path only when two files are genuinely comparable in severity.
+
+#### Format
+
+Build a draft with one subsection per risk level, in order Critical → Medium → Low. All three subsections are always present, even when a risk level has no files — keep the heading and leave the file list empty, no placeholder bullet (one blank line before the next heading, same spacing as a populated subsection). Each file gets a one-line annotation (≤10 words) summarizing what changed in that file, derived from the diff content gathered in Step 1:
 
 ```markdown
 ## File risk
@@ -165,14 +175,12 @@ Build a draft with one subsection per risk level, in order Critical → Medium �
 
 ### 🟡 Medium
 
-- `<path>` — <short summary of the change>
-
 ### 🟢 Low
 
 - `<path>` — <short summary of the change>
 ```
 
-The heading text (`## File risk`, `### 🔴 Critical`, `### 🟡 Medium`, `### 🟢 Low`) and the `` `<path>` — <summary> `` bullet format are a stable contract other skills parse from the PR body — do not reword or reformat them.
+The heading text (`## File risk`, `### 🔴 Critical`, `### 🟡 Medium`, `### 🟢 Low`), the fact that all three subsections always appear (with no bullets when a bucket is empty), and the `` `<path>` — <summary> `` bullet format are a stable contract other skills parse from the PR body — do not reword or reformat them.
 
 Store the derived sections as `<file-risk>`.
 
