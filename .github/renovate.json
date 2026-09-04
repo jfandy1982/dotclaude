@@ -1,5 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>jfandy1982/.github//renovate-base.json"],
-  "schedule": ["after 12pm and before 1pm on Friday"]
+  "extends": ["github>jfandy1982/.github//renovate-base.json"]
 }
