@@ -141,9 +141,39 @@ Format as individual `Closes #N` lines.
 
 Store the result as `<closes>` and the fetched issue summaries (including each issue's full body and labels) as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1 — do not re-fetch issues per step. Step 6 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
 
-### Step 3 — File risk
+### Step 3 — Label selection
 
-Using the changed files list from Step 1 and `<issue-context>` from Step 2, classify each file.
+```bash
+gh label list --json name,description --limit 50
+```
+
+Store the fetched labels (name + description) — reuse in Step 4 (file risk) and later in this step; do not re-fetch.
+
+**Taxonomy detection:** Filter results to labels with `type:` or `aspect:` prefixes.
+
+- If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
+- If no `type:`/`aspect:` labels exist → **fallback mode**: use all repo labels unfiltered. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
+
+**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
+
+If a linked issue carries an `aspect:` label (from `<issue-context>`) that exists in the fetched label list, infer it as the suggested `aspect:` label. No other `aspect:` inference is attempted — without a linked issue carrying one, no `aspect:` label is inferred. No inference is attempted for `aspect:` from branch context — too context-dependent to guess reliably.
+
+If no `type:` label could be inferred, leave the slot empty rather than blocking.
+
+#### Verification
+
+Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list (exact match). If a name doesn't match any existing label, warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
+
+**Enforcement** (standard mode only):
+
+- If no `type:` label was selected, warn the author but do not block — labels can be adjusted on the PR afterward.
+- `type: deployment` cannot be combined with any other `type:` label. If selected alongside another type, warn and ask the author to resolve the conflict before proceeding.
+
+Store the final label set as `<selected-labels>`.
+
+### Step 4 — File risk
+
+Using the changed files list from Step 1, `<issue-context>` from Step 2, and the label descriptions fetched in Step 3, classify each file.
 
 | Risk | File characteristics |
 | --- | --- |
@@ -154,6 +184,8 @@ Using the changed files list from Step 1 and `<issue-context>` from Step 2, clas
 Classify by what actually changed in the diff, not just the file name — e.g. a one-line version bump in a lockfile or config file stays Low/Medium as appropriate, while a substantial change to the same file may warrant a higher classification.
 
 Also weigh each file against the PR's overall intent, not just its own diff in isolation — the same file pair can rank differently depending on what the PR is actually about. In a dependency-update PR, `package.json` is the intentional change and outranks its lockfile, which is just the mechanical follow-on. In a feature PR that happens to add a dependency, the reverse holds — the lockfile (and often `package.json` itself) is a low-risk side effect, and the real risk sits in the feature code elsewhere in the diff. Derive the PR's overall intent from the branch context gathered in Step 1 (commit messages, branch name, dominant change) rather than reasoning about each file in a vacuum.
+
+Use the fetched label descriptions (Step 3) as an additional signal for which areas/topics matter in this repo — e.g. a label described as covering security or auth work raises attention on files touching that area; a label describing infrastructure/CI raises attention on `.github/workflows/*` changes. Only apply this when a label's description clearly maps to the changed files — don't force a connection that isn't there.
 
 When in doubt, classify up rather than down.
 
@@ -184,41 +216,13 @@ The heading text (`## File risk`, `### 🔴 Critical`, `### 🟡 Medium`, `### �
 
 Store the derived sections as `<file-risk>`.
 
-### Step 4 — Label selection
-
-```bash
-gh label list --json name --limit 50
-```
-
-**Taxonomy detection:** Filter results to labels with `type:` or `aspect:` prefixes.
-
-- If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
-- If no `type:`/`aspect:` labels exist → **fallback mode**: use all repo labels unfiltered. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
-
-**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
-
-If a linked issue carries an `aspect:` label (from `<issue-context>`) that exists in the fetched label list, infer it as the suggested `aspect:` label. No other `aspect:` inference is attempted — without a linked issue carrying one, no `aspect:` label is inferred. No inference is attempted for `aspect:` from branch context — too context-dependent to guess reliably.
-
-If no `type:` label could be inferred, leave the slot empty rather than blocking.
-
-#### Verification
-
-Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list (exact match). If a name doesn't match any existing label, warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
-
-**Enforcement** (standard mode only):
-
-- If no `type:` label was selected, warn the author but do not block — labels can be adjusted on the PR afterward.
-- `type: deployment` cannot be combined with any other `type:` label. If selected alongside another type, warn and ask the author to resolve the conflict before proceeding.
-
-Store the final label set as `<selected-labels>`.
-
 ### Step 5 — PR title
 
 Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git branch`/`git log`/`git diff`.
 
 Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
 
-No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, leave `<title>` as a placeholder needing author input — surfaced as missing in the Step 6 preview.
+No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 3) as the type prefix. If no `type:` label was selected either, leave `<title>` as a placeholder needing author input — surfaced as missing in the Step 6 preview.
 
 Format validation against conventional commit format (`<type>(<optional scope>): <description>`) happens in the Step 6 preview, not here.
 
@@ -231,7 +235,7 @@ Derive a combined "What" and "Why" from the branch context gathered in Step 1 (c
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
 - **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from either source, state that explicitly rather than inventing one.
 
-Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 3, followed by a `## Closes` section built from `<closes>`. Omit the `## Closes` section entirely if `<closes>` is empty.
+Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 4, followed by a `## Closes` section built from `<closes>`. Omit the `## Closes` section entirely if `<closes>` is empty.
 
 Default `<draft-state>` to "ready for review".
 
@@ -245,7 +249,7 @@ Use the AskUserQuestion tool to ask:
 - Options:
   - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 7
   - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Closes. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
-  - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 4 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
+  - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 3 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
 
 Loop has no fixed iteration cap — repeat until the author chooses "Looks good, create it."
 
