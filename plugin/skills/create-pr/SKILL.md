@@ -114,6 +114,34 @@ Use `<remote>/<DEFAULT>` (not local `<DEFAULT>`) — Precondition 2 already fetc
 
 Read `<branch>` (from Precondition 1), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
 
+**Checklist table lookup.** In addition to the git commands above, read exactly one file — the target repo's own root `CLAUDE.md` (same repo root the git commands above already operate in, found via `git rev-parse --show-toplevel` or equivalent):
+
+```
+Read <repo-root>/CLAUDE.md
+```
+
+Read only this path. Do not search, glob, or read any other `CLAUDE.md` — not a nested one inside the same repo, not one further up the directory tree (e.g. a workspace-level `CLAUDE.md` covering multiple repos), and not one belonging to a different repo.
+
+- No `CLAUDE.md` file in the repo root → no checklist. Continue silently.
+- `CLAUDE.md` exists, no `### PR merge checklist` heading → no checklist. Continue silently.
+- `### PR merge checklist` heading exists, but nothing under it parses as a markdown table, or the table is missing a `File pattern` or `Checklist item` column (matched by exact header text, not position — extra columns are ignored) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 6 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from the no-heading case above, which needs no note: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
+- Heading and a usable table (both required columns present) → proceed to matching.
+
+**Match against changed files.** For each row with both a `File pattern` and `Checklist item` value (skip rows missing either):
+
+1. Split `File pattern` on commas into individual patterns. Trim whitespace and strip a single pair of surrounding backticks from each piece — the cells are backtick-wrapped markdown (e.g. `` `.github/labels.yml` ``), not bare paths, and matching on the unstripped form silently matches nothing.
+2. Run one command per row, passing every cleaned pattern from that row as a separate `:(glob)` pathspec:
+
+   ```bash
+   git diff <remote>/<DEFAULT>...HEAD --name-only -- ':(glob)<pattern-1>' ':(glob)<pattern-2>' ...
+   ```
+
+   Non-empty stdout → the row matches. Empty stdout → no match. Do not use the exit code — this command always exits `0` regardless of whether anything matched.
+
+3. A matching row contributes its `Checklist item` cell, copied as raw markdown (backticks and all), to `<pr-checklist>`.
+
+Store the result as `<pr-checklist>`, in table row order, with exact-duplicate item strings collapsed to their first occurrence. Empty `<pr-checklist>` is the common case and is not itself a warning.
+
 ### Step 2 — Issue linking
 
 Ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Remark: Issues have to exist in THIS repository."
@@ -149,10 +177,14 @@ gh label list --json name,description --limit 50
 
 Store the fetched labels (name + description) — reuse in Step 4 (file risk) and later in this step; do not re-fetch.
 
-**Taxonomy detection:** Filter results to labels with `type:` or `aspect:` prefixes.
+**Taxonomy detection:** Filter to labels with `type:` or `aspect:` prefixes via `jq`, applied to the already-fetched list from the command above (do not re-run `gh label list`):
+
+```bash
+jq '[.[] | select(.name | startswith("type:") or startswith("aspect:"))]'
+```
 
 - If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
-- If no `type:`/`aspect:` labels exist → **fallback mode**: use all repo labels unfiltered. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
+- If no `type:`/`aspect:` labels exist (empty `jq` result) → **fallback mode**: use all repo labels unfiltered (the full list from the original fetch). Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
 
 **Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
 
@@ -162,7 +194,13 @@ If no `type:` label could be inferred, leave the slot empty rather than blocking
 
 #### Verification
 
-Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list (exact match). If a name doesn't match any existing label, warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
+Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list via `jq`, not by eyeballing the array — apply this to the label list already stored from the fetch above, no re-fetch:
+
+```bash
+jq --arg name "<label-name>" 'any(.[]; .name == $name)'
+```
+
+`true` → the name matches an existing label, proceed. `false` → warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
 
 **Enforcement** (standard mode only):
 
@@ -235,13 +273,22 @@ Derive a combined "What" and "Why" from the branch context gathered in Step 1 (c
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
 - **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from either source, state that explicitly rather than inventing one.
 
-Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 4, followed by a `## Closes` section built from `<closes>`. Omit the `## Closes` section entirely if `<closes>` is empty.
+Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 4, followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
+
+```markdown
+## PR checklist
+
+- [ ] <checklist item 1>
+- [ ] <checklist item 2>
+```
+
+Rendered as standard GitHub Flavored Markdown task-list items (unchecked) — GitHub renders these as interactive checkboxes on the PR page, but `create-pr` itself never checks them and never reads their checked state back.
 
 Default `<draft-state>` to "ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Closes), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final.
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If Step 1 found a `### PR merge checklist` heading but couldn't use it (no table, or a table missing a required column), also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
 Use the AskUserQuestion tool to ask:
 

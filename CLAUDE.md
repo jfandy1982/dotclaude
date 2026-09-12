@@ -13,6 +13,11 @@ Skills and Agents and Hooks and ... reusable for Claude Code.
 - `README.md` (root) and `plugin/skills/README.md` list current contents — update them whenever skills are added, moved, or removed
 - `plugin/` — plugin root; what `source` in `.claude-plugin/marketplace.json` resolves to. Component folders (`skills/`, later `agents/`) live here
 
+## Skill Design Conventions
+
+- Delegate deterministic checks to a real command/tool the skill already uses for its core purpose, instead of having the model reason over raw text — e.g. a skill already shelling out to `git` should use `git diff -- ':(glob)<pattern>'` (git's own pathspec matching) for glob/pattern matching rather than eyeballing a file list against a pattern in prose; a skill already calling `gh`/`claude` should prefer their `--json` flags over parsing free-text output. This is about reusing a tool already in play, not adding a new dependency (e.g. `git`) purely to satisfy this rule — a skill with no existing reason to touch git shouldn't add one just for pattern matching. Skills have no real code — every step is an LLM executing instructions — so anything a tool already in use solves reliably should run as an actual command, not be re-derived by inference each run. This removes a class of flakiness where the same instructions could be interpreted slightly differently between runs.
+- When delegating to a command for a yes/no check, verify what actually signals success — do not assume a non-zero exit code means failure or a zero exit code means success without checking. Several real commands violate the intuitive mapping (e.g. `git diff -- <pathspec>` exits `0` whether or not anything matched; `claude plugin enable <already-enabled>` exits `1` despite nothing being wrong). Prefer parsing the command's actual output over trusting its exit code when in doubt.
+
 ## Tooling
 
 - GitHub Actions SHAs are manually verified and pinned — do not flag pinned SHAs as outdated without checking first
