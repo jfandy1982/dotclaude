@@ -100,7 +100,7 @@ gh pr list --head <branch> --state open --json number,title
 
 ## Create Flow
 
-Run these steps in this exact order. Inference in Steps 3–6 (file risk, labels, title, body) runs silently — no `AskUserQuestion` stops until the Step 6 combined preview loop. Missing or invalid results are not fixed inline; they are surfaced and corrected in that loop.
+Run these steps in this exact order. Inference in Steps 4–7 (labels, file risk, title, body) runs silently — no `AskUserQuestion` stops until the Step 7 combined preview loop. Missing or invalid results are not fixed inline; they are surfaced and corrected in that loop.
 
 ### Step 1 — Gather branch context
 
@@ -124,7 +124,7 @@ Read only this path. Do not search, glob, or read any other `CLAUDE.md` — not 
 
 - No `CLAUDE.md` file in the repo root → no checklist. Continue silently.
 - `CLAUDE.md` exists, no `### PR merge checklist` heading → no checklist. Continue silently.
-- `### PR merge checklist` heading exists, but nothing under it parses as a markdown table, or the table is missing a `File pattern` or `Checklist item` column (matched by exact header text, not position — extra columns are ignored) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 6 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from the no-heading case above, which needs no note: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
+- `### PR merge checklist` heading exists, but nothing under it parses as a markdown table, or the table is missing a `File pattern` or `Checklist item` column (matched by exact header text, not position — extra columns are ignored) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 7 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from the no-heading case above, which needs no note: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
 - Heading and a usable table (both required columns present) → proceed to matching.
 
 **Match against changed files.** For each row with both a `File pattern` and `Checklist item` value (skip rows missing either):
@@ -167,15 +167,50 @@ Otherwise, use the AskUserQuestion tool to show a confirmation listing each issu
 
 Format as individual `Closes #N` lines.
 
-Store the result as `<closes>` and the fetched issue summaries (including each issue's full body and labels) as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1 — do not re-fetch issues per step. Step 6 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
+Store the result as `<closes>` and the fetched issue summaries (including each issue's full body and labels) as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1 — do not re-fetch issues per step. Step 7 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
 
-### Step 3 — Label selection
+### Step 3 — CodeQL alert linking
+
+Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert number(s) this PR fixes? (comma-separated, e.g. 3, 5 — or N/A) Remark: Alerts have to exist in THIS repository."
+
+For each number provided:
+
+```bash
+gh api repos/{owner}/{repo}/code-scanning/alerts/<N>
+```
+
+- Not found → use the AskUserQuestion tool to warn and ask the author to correct or drop it. Not a hard block.
+- `state` is `fixed` or `dismissed` → use the AskUserQuestion tool to warn ("Alert #N is already <state> — still include?") with options "Include anyway" / "Drop it". Not a hard block.
+- Found and open → fetch `rule.id`, `rule.description`, `rule.security_severity_level`, `most_recent_instance.message.text`, `most_recent_instance.location.path`.
+
+If `N/A`, skip the confirmation below and continue with `<codeql-context>` empty.
+
+Otherwise, use the AskUserQuestion tool to show a confirmation listing each alert number with its fetched `rule.id`:
+
+- Question: "Confirm linked CodeQL alerts:"
+- Options:
+  - "Use these alerts" (Recommended) — preview: each alert number with its fetched `rule.id`
+  - "Edit" — author revises the alert number list via a follow-up plain text prompt
+
+There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing branch/PR to an alert automatically once a scan of that branch clears the alert's fingerprint; this is not settable via `gh api`/`gh pr create`, so `create-pr` does not attempt it and adds no PR body section for alerts.
+
+**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `html_url` and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then use the AskUserQuestion tool:
+
+- Question: "Assign yourself to each linked alert and link this branch under its Development section (both in the GitHub UI), then continue."
+- Options:
+  - "Done, continue" — the only option; proceed to Step 4
+
+This is not verified — `create-pr` has no way to check either action happened — it is an explicit acknowledgment gate, not a hard block on unconfirmed state.
+
+Store the fetched alert summaries as `<codeql-context>`. Subsequent steps (file risk, label inference, PR title, body) use `<codeql-context>` as additional signal alongside `<issue-context>` and the branch context from Step 1 — do not re-fetch alerts per step. `<codeql-context>` is commonly empty; this is not itself a warning.
+
+### Step 4 — Label selection
 
 ```bash
 gh label list --json name,description --limit 50
 ```
 
-Store the fetched labels (name + description) — reuse in Step 4 (file risk) and later in this step; do not re-fetch.
+Store the fetched labels (name + description) — reuse in Step 5 (file risk) and later in this step; do not re-fetch.
 
 **Taxonomy detection:** Filter to labels with `type:` or `aspect:` prefixes via `jq`, applied to the already-fetched list from the command above (do not re-run `gh label list`):
 
@@ -186,15 +221,15 @@ jq '[.[] | select(.name | startswith("type:") or startswith("aspect:"))]'
 - If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
 - If no `type:`/`aspect:` labels exist (empty `jq` result) → **fallback mode**: use all repo labels unfiltered (the full list from the original fetch). Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
 
-**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
+**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
 
-From the branch context gathered in Step 1 (changed files, diff content) and `<issue-context>` from Step 2, infer a suggested `aspect:` label. Signal: changed files and diff content, weighed against the fetched label descriptions (Step 3) for topic/area match — e.g. changes concentrated in UI components/templates suggest `aspect: ui`, changes to CLI/API surface suggest `aspect: api`, changes to repo tooling/config suggest `aspect: repo`. No inference is attempted from branch name — too context-dependent to guess reliably. If a linked issue already carries an `aspect:` label that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent diff signal, and surface it alongside the diff-derived guess if the two disagree so the author can pick. If no clear signal, no `aspect:` label is inferred.
+From the branch context gathered in Step 1 (changed files, diff content), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `aspect:` label. Signal: changed files and diff content, weighed against the fetched label descriptions (Step 4) for topic/area match — e.g. changes concentrated in UI components/templates suggest `aspect: ui`, changes to CLI/API surface suggest `aspect: api`, changes to repo tooling/config suggest `aspect: repo`; a linked CodeQL alert's flagged file path reinforces this same matching (e.g. an alert flagging an auth file alongside a `security` aspect label). No inference is attempted from branch name — too context-dependent to guess reliably. If a linked issue already carries an `aspect:` label that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent diff signal, and surface it alongside the diff-derived guess if the two disagree so the author can pick. If no clear signal, no `aspect:` label is inferred.
 
 If no `type:` label could be inferred, leave the slot empty rather than blocking.
 
 #### Verification
 
-Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list via `jq`, not by eyeballing the array — apply this to the label list already stored from the fetch above, no re-fetch:
+Whenever a label is set or changed (initial inference, or a correction made in the Step 7 loop), verify the label name against the fetched label list via `jq`, not by eyeballing the array — apply this to the label list already stored from the fetch above, no re-fetch:
 
 ```bash
 jq --arg name "<label-name>" 'any(.[]; .name == $name)'
@@ -209,9 +244,9 @@ jq --arg name "<label-name>" 'any(.[]; .name == $name)'
 
 Store the final label set as `<selected-labels>`.
 
-### Step 4 — File risk
+### Step 5 — File risk
 
-Using the changed files list from Step 1, `<issue-context>` from Step 2, and the label descriptions fetched in Step 3, classify each file.
+Using the changed files list from Step 1, `<issue-context>` from Step 2, `<codeql-context>` from Step 3, and the label descriptions fetched in Step 4, classify each file.
 
 | Risk | File characteristics |
 | --- | --- |
@@ -223,7 +258,9 @@ Classify by what actually changed in the diff, not just the file name — e.g. a
 
 Also weigh each file against the PR's overall intent, not just its own diff in isolation — the same file pair can rank differently depending on what the PR is actually about. In a dependency-update PR, `package.json` is the intentional change and outranks its lockfile, which is just the mechanical follow-on. In a feature PR that happens to add a dependency, the reverse holds — the lockfile (and often `package.json` itself) is a low-risk side effect, and the real risk sits in the feature code elsewhere in the diff. Derive the PR's overall intent from the branch context gathered in Step 1 (commit messages, branch name, dominant change) rather than reasoning about each file in a vacuum.
 
-Use the fetched label descriptions (Step 3) as an additional signal for which areas/topics matter in this repo — e.g. a label described as covering security or auth work raises attention on files touching that area; a label describing infrastructure/CI raises attention on `.github/workflows/*` changes. Only apply this when a label's description clearly maps to the changed files — don't force a connection that isn't there.
+Use the fetched label descriptions (Step 4) as an additional signal for which areas/topics matter in this repo — e.g. a label described as covering security or auth work raises attention on files touching that area; a label describing infrastructure/CI raises attention on `.github/workflows/*` changes. Only apply this when a label's description clearly maps to the changed files — don't force a connection that isn't there.
+
+A file flagged by a linked CodeQL alert (`<codeql-context>` from Step 3, matched by the alert's `most_recent_instance.location.path`) is raised at least to the risk level implied by the alert's `rule.security_severity_level` — don't let the file's own name-based default (e.g. a config file normally Low) undersell a file with an open security finding on it.
 
 When in doubt, classify up rather than down.
 
@@ -254,26 +291,26 @@ The heading text (`## File risk`, `### 🔴 Critical`, `### 🟡 Medium`, `### �
 
 Store the derived sections as `<file-risk>`.
 
-### Step 5 — PR title
+### Step 6 — PR title
 
-Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git branch`/`git log`/`git diff`.
+Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3 — do not re-run `git branch`/`git log`/`git diff`.
 
 Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
 
-No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 3) as the type prefix. If no `type:` label was selected either, leave `<title>` as a placeholder needing author input — surfaced as missing in the Step 6 preview.
+No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, leave `<title>` as a placeholder needing author input — surfaced as missing in the Step 7 preview.
 
-Format validation against conventional commit format (`<type>(<optional scope>): <description>`) happens in the Step 6 preview, not here.
+Format validation against conventional commit format (`<type>(<optional scope>): <description>`) happens in the Step 7 preview, not here.
 
 Store the derived title as `<title>`.
 
-### Step 6 — PR description (body)
+### Step 7 — PR description (body)
 
-Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2 — do not re-run `git log`/`git diff`:
+Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3 — do not re-run `git log`/`git diff`:
 
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
-- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from either source, state that explicitly rather than inventing one.
+- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `rule.description`/`most_recent_instance.message.text` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one.
 
-Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 4, followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
+Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 5, followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
 
 ```markdown
 ## PR checklist
@@ -294,13 +331,13 @@ Use the AskUserQuestion tool to ask:
 
 - Question: "Does this PR look right?"
 - Options:
-  - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 7
+  - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 8
   - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Closes. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
-  - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 3 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
+  - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / CodeQL alert links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 4 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; CodeQL alert-link corrections still go through the Step 3 not-found/already-fixed-or-dismissed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
 
 Loop has no fixed iteration cap — repeat until the author chooses "Looks good, create it."
 
-### Step 7 — Create PR
+### Step 8 — Create PR
 
 ```bash
 gh pr create \
