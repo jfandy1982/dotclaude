@@ -114,6 +114,34 @@ Use `<remote>/<DEFAULT>` (not local `<DEFAULT>`) — Precondition 2 already fetc
 
 Read `<branch>` (from Precondition 1), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
 
+**Checklist table lookup.** In addition to the git commands above, read exactly one file — the target repo's own root `CLAUDE.md` (same repo root the git commands above already operate in, found via `git rev-parse --show-toplevel` or equivalent):
+
+```
+Read <repo-root>/CLAUDE.md
+```
+
+Read only this path. Do not search, glob, or read any other `CLAUDE.md` — not a nested one inside the same repo, not one further up the directory tree (e.g. a workspace-level `CLAUDE.md` covering multiple repos), and not one belonging to a different repo.
+
+- No `CLAUDE.md` file in the repo root → no checklist. Continue silently.
+- `CLAUDE.md` exists, no `### PR merge checklist` heading → no checklist. Continue silently.
+- `### PR merge checklist` heading exists, but nothing under it parses as a markdown table, or the table is missing a `File pattern` or `Checklist item` column (matched by exact header text, not position — extra columns are ignored) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 6 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from the no-heading case above, which needs no note: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
+- Heading and a usable table (both required columns present) → proceed to matching.
+
+**Match against changed files.** For each row with both a `File pattern` and `Checklist item` value (skip rows missing either):
+
+1. Split `File pattern` on commas into individual patterns. Trim whitespace and strip a single pair of surrounding backticks from each piece — the cells are backtick-wrapped markdown (e.g. `` `.github/labels.yml` ``), not bare paths, and matching on the unstripped form silently matches nothing.
+2. Run one command per row, passing every cleaned pattern from that row as a separate `:(glob)` pathspec:
+
+   ```bash
+   git diff <remote>/<DEFAULT>...HEAD --name-only -- ':(glob)<pattern-1>' ':(glob)<pattern-2>' ...
+   ```
+
+   Non-empty stdout → the row matches. Empty stdout → no match. Do not use the exit code — this command always exits `0` regardless of whether anything matched.
+
+3. A matching row contributes its `Checklist item` cell, copied as raw markdown (backticks and all), to `<pr-checklist>`.
+
+Store the result as `<pr-checklist>`, in table row order, with exact-duplicate item strings collapsed to their first occurrence. Empty `<pr-checklist>` is the common case and is not itself a warning.
+
 ### Step 2 — Issue linking
 
 Ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Remark: Issues have to exist in THIS repository."
