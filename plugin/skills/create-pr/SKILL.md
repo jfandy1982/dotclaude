@@ -263,13 +263,22 @@ Derive a combined "What" and "Why" from the branch context gathered in Step 1 (c
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
 - **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from either source, state that explicitly rather than inventing one.
 
-Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 4, followed by a `## Closes` section built from `<closes>`. Omit the `## Closes` section entirely if `<closes>` is empty.
+Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 4, followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
+
+```markdown
+## PR checklist
+
+- [ ] <checklist item 1>
+- [ ] <checklist item 2>
+```
+
+Rendered as standard GitHub Flavored Markdown task-list items (unchecked) — GitHub renders these as interactive checkboxes on the PR page, but `create-pr` itself never checks them and never reads their checked state back.
 
 Default `<draft-state>` to "ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Closes), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final.
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If Step 1 found a `### PR merge checklist` heading but couldn't use it (no table, or a table missing a required column), also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
 Use the AskUserQuestion tool to ask:
 
