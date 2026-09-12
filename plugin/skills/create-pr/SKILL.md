@@ -177,10 +177,14 @@ gh label list --json name,description --limit 50
 
 Store the fetched labels (name + description) — reuse in Step 4 (file risk) and later in this step; do not re-fetch.
 
-**Taxonomy detection:** Filter results to labels with `type:` or `aspect:` prefixes.
+**Taxonomy detection:** Filter to labels with `type:` or `aspect:` prefixes via `jq`, applied to the already-fetched list from the command above (do not re-run `gh label list`):
+
+```bash
+jq '[.[] | select(.name | startswith("type:") or startswith("aspect:"))]'
+```
 
 - If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
-- If no `type:`/`aspect:` labels exist → **fallback mode**: use all repo labels unfiltered. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
+- If no `type:`/`aspect:` labels exist (empty `jq` result) → **fallback mode**: use all repo labels unfiltered (the full list from the original fetch). Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
 
 **Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff) and `<issue-context>` from Step 2, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
 
@@ -190,7 +194,13 @@ If no `type:` label could be inferred, leave the slot empty rather than blocking
 
 #### Verification
 
-Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list (exact match). If a name doesn't match any existing label, warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
+Whenever a label is set or changed (initial inference, or a correction made in the Step 6 loop), verify the label name against the fetched label list via `jq`, not by eyeballing the array — apply this to the label list already stored from the fetch above, no re-fetch:
+
+```bash
+jq --arg name "<label-name>" 'any(.[]; .name == $name)'
+```
+
+`true` → the name matches an existing label, proceed. `false` → warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
 
 **Enforcement** (standard mode only):
 
