@@ -3,9 +3,9 @@
   "owner": { "name": "jfandy1982" },
   "plugins": [
     {
-      "name": "dotclaude",
-      "source": "./plugin",
-      "description": "Opinionated skills reusable for Claude code"
+      "name": "dotclaude-dev",
+      "source": "./plugins/dotclaude-dev",
+      "description": "Opinionated software-development skills for Claude Code"
     }
   ]
 }
