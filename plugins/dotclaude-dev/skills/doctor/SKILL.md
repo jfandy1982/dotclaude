@@ -20,13 +20,13 @@ Run every check below and store each result before moving to Step 2. No fixing y
 
 | Plugin | Category |
 | --- | --- |
-| `dotclaude@jfandy1982-dotclaude` | self |
+| `dotclaude-dev@jfandy1982-dotclaude` | self |
 | `superpowers@claude-plugins-official` | mandatory |
 | `feature-dev@claude-plugins-official` | mandatory |
 | `pr-review-toolkit@claude-plugins-official` | mandatory |
 | `ponytail@ponytail` | optional |
 
-`dotclaude` can only ever resolve to `enabled` — if this skill is running, its own plugin is installed and enabled.
+`dotclaude-dev` can only ever resolve to `enabled` — if this skill is running, its own plugin is installed and enabled.
 
 **CLI tools** — `command -v <tool>`, one invocation per tool. Each is `present` or `missing`, and mandatory.
 
@@ -40,7 +40,7 @@ Run every check below and store each result before moving to Step 2. No fixing y
 
 ## Step 2 — Fix pass (ask-first)
 
-Act on the statuses stored in Step 1 — never re-run a check here. Plugins with status `disabled` or `missing` need a fix; `dotclaude` is excluded entirely. CLI tools and environment variables are never fixed, only reported. If nothing needs a fix, skip this step.
+Act on the statuses stored in Step 1 — never re-run a check here. Plugins with status `disabled` or `missing` need a fix; `dotclaude-dev` is excluded entirely. CLI tools and environment variables are never fixed, only reported. If nothing needs a fix, skip this step.
 
 Ask in two rounds, mandatory plugins first, then optional — one `AskUserQuestion` call per round, one question per plugin. Skip a round whose category has nothing to fix. `AskUserQuestion` accepts at most 4 questions, so split a category with more than 4 into successive calls.
 
@@ -57,11 +57,11 @@ Ignore the exit code; it is unreliable for both commands. Parse the JSON's `outc
 
 Render exactly once, after Steps 1 and 2 are both complete. One line per check, grouped by category, with ✔/✘ markers.
 
-An item passes when: `dotclaude` — always; a mandatory plugin — Step 1 said `enabled`, or Step 2 recorded `fixed`; a CLI tool — `present`. Optional plugins and env vars never affect the overall pass, but a non-clean state is always surfaced.
+An item passes when: `dotclaude-dev` — always; a mandatory plugin — Step 1 said `enabled`, or Step 2 recorded `fixed`; a CLI tool — `present`. Optional plugins and env vars never affect the overall pass, but a non-clean state is always surfaced.
 
-If every mandatory plugin, `dotclaude`, and every CLI tool pass, print:
+If every mandatory plugin, `dotclaude-dev`, and every CLI tool pass, print:
 
-> "All mandatory prerequisites for using the dotclaude plugin are set up."
+> "All mandatory prerequisites for using the dotclaude-dev plugin are set up."
 
 followed — only when an optional plugin or env var is not clean (`disabled`/`missing`/`skipped`/`fix-failed`) — by one line per non-clean optional item:
 
