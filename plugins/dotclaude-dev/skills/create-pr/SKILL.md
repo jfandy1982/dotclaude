@@ -79,7 +79,7 @@ Store as `<host>`.
 **Precondition 5 — Confirm auth and resolve assignee**
 
 ```bash
-gh api user | jq -r '.login'
+gh api user --jq '.login'
 ```
 
 - Non-zero exit → stop:
@@ -254,19 +254,19 @@ Using the changed files list from Step 1, `<issue-context>` from Step 2, `<codeq
 | **Medium** | Service methods, DTOs, state management, API contracts, CI/CD workflows (`.github/workflows/*`); default for unrecognized files |
 | **Low** | Tests, renaming, styling/templates, README, config files |
 
-Classify by what actually changed in the diff, not just the file name — e.g. a one-line version bump in a lockfile or config file stays Low/Medium as appropriate, while a substantial change to the same file may warrant a higher classification.
+Classify by what actually changed in the diff, not just the file name — e.g. a one-line version bump in `package-lock.json` stays Low, while hundreds of changed lines from a major upgrade may warrant a higher classification.
 
-Also weigh each file against the PR's overall intent, not just its own diff in isolation — the same file pair can rank differently depending on what the PR is actually about. In a dependency-update PR, `package.json` is the intentional change and outranks its lockfile, which is just the mechanical follow-on. In a feature PR that happens to add a dependency, the reverse holds — the lockfile (and often `package.json` itself) is a low-risk side effect, and the real risk sits in the feature code elsewhere in the diff. Derive the PR's overall intent from the branch context gathered in Step 1 (commit messages, branch name, dominant change) rather than reasoning about each file in a vacuum.
+Also weigh each file against the PR's overall intent, not just its own diff in isolation — the same file pair can rank differently depending on what the PR is actually about. In a dependency-update PR, `package.json` is the intentional change and outranks `package-lock.json`, which is just the mechanical follow-on. In a feature PR that happens to add a dependency, the reverse holds — `package-lock.json` (and often `package.json` itself) is a low-risk side effect, and the real risk sits in the feature code elsewhere in the diff. Derive the PR's overall intent from the branch context gathered in Step 1 (commit messages, branch name, dominant change) rather than reasoning about each file in a vacuum.
 
-Use the fetched label descriptions (Step 4) as an additional signal for which areas/topics matter in this repo — e.g. a label described as covering security or auth work raises attention on files touching that area; a label describing infrastructure/CI raises attention on `.github/workflows/*` changes. Only apply this when a label's description clearly maps to the changed files — don't force a connection that isn't there.
+Use the fetched label descriptions (Step 4) as an additional signal for which areas/topics matter in this repo — e.g. a label described as covering authentication or data access raises attention on `src/users/user.service.ts`; a label described as CI or infrastructure raises attention on `.github/workflows/ci.yml`. Only apply this when a label's description clearly maps to the changed files — don't force a connection that isn't there.
 
-A file flagged by a linked CodeQL alert (`<codeql-context>` from Step 3, matched by the alert's `most_recent_instance.location.path`) is raised at least to the risk level implied by the alert's `rule.security_severity_level` — don't let the file's own name-based default (e.g. a config file normally Low) undersell a file with an open security finding on it.
+A file flagged by a linked CodeQL alert (`<codeql-context>` from Step 3, matched by the alert's `most_recent_instance.location.path`) is raised at least to the risk level implied by the alert's `rule.security_severity_level` — don't let the file's own name-based default (e.g. `src/users/user.service.ts`, normally Medium) undersell a file with an open security finding on it.
 
 When in doubt, classify up rather than down.
 
 #### Ranking
 
-Within a subsection, two files can share the same bucket but not the same severity — e.g. a DB migration and a service-layer wiring change can both be Critical, but the migration mutates persisted data and is hard to roll back, while the service change is contained and easy to revert with a follow-up PR. Order files within each subsection by that severity (irreversibility and blast radius first), falling back to alphabetical by path only when two files are genuinely comparable in severity.
+Within a subsection, two files can share the same bucket but not the same severity — e.g. `db/migrations/0042_drop_users_legacy_id.sql` and `src/users/user.service.ts` can both be Critical, but the migration mutates persisted data and is hard to roll back, while the service change is contained and easy to revert with a follow-up PR. Order files within each subsection by that severity (irreversibility and blast radius first), falling back to alphabetical by path only when two files are genuinely comparable in severity.
 
 #### Format
 
@@ -308,9 +308,11 @@ Store the derived title as `<title>`.
 Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3 — do not re-run `git log`/`git diff`:
 
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
-- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `rule.description`/`most_recent_instance.message.text` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one.
+- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `rule.description`/`most_recent_instance.message.text` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one. Start at the motivation itself — no intro sentence, no restating the title or What — and keep it to 1–5 sentences.
 
-Assemble `<body>` as the derived What/Why text, followed by `<file-risk>` from Step 5, followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
+Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, decide this explicitly rather than defaulting. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is a justification that leads with the irreversible thing and names a concrete change from the diff (e.g. "Drops column `users.legacy_id` in `db/migrations/0042_drop_users_legacy_id.sql`; reverting the PR won't restore the data."). "Risky" alone is not a justification.
+
+Assemble `<body>` as a `## What` section with the derived What text, followed by a `## Why` section with the derived Why text, followed by `<file-risk>` from Step 5, followed by a `## Merge danger` section built from `<merge-danger>` (omitted if `<merge-danger>` is empty), followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
 
 ```markdown
 ## PR checklist
@@ -325,14 +327,14 @@ Default `<draft-state>` to "ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If Step 1 found a `### PR merge checklist` heading but couldn't use it (no table, or a table missing a required column), also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If Step 1 found a `### PR merge checklist` heading but couldn't use it (no table, or a table missing a required column), also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
 Use the AskUserQuestion tool to ask:
 
 - Question: "Does this PR look right?"
 - Options:
   - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 8
-  - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Closes. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
+  - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Merge danger. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
   - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / CodeQL alert links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 4 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; CodeQL alert-link corrections still go through the Step 3 not-found/already-fixed-or-dismissed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
 
 Loop has no fixed iteration cap — repeat until the author chooses "Looks good, create it."
@@ -341,11 +343,15 @@ Loop has no fixed iteration cap — repeat until the author chooses "Looks good,
 
 ```bash
 gh pr create \
-  --title "<title>" \
-  --body "<body>" \
   --assignee @me \
   [--label "<label1>" --label "<label2>" ... for each label in <selected-labels>, omit entirely if empty] \
-  [--draft if <draft-state> is "Draft"]
+  [--draft if <draft-state> is "Draft"] \
+  --title "<title>" \
+  --body-file - <<'EOF'
+<body>
+EOF
 ```
+
+Pass `<body>` through the quoted heredoc (`<<'EOF'`), never inside a double-quoted `--body` argument — the body contains backticks, which the shell would otherwise run as command substitutions. If `<body>` itself contains a line that is exactly `EOF`, use a different delimiter.
 
 Display the PR URL returned by the command.
