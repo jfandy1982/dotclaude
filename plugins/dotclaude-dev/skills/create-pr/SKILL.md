@@ -334,7 +334,7 @@ Use the AskUserQuestion tool to ask:
 - Question: "Does this PR look right?"
 - Options:
   - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 8
-  - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Merge danger / Closes. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
+  - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Merge danger. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
   - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / CodeQL alert links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 4 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; CodeQL alert-link corrections still go through the Step 3 not-found/already-fixed-or-dismissed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
 
 Loop has no fixed iteration cap — repeat until the author chooses "Looks good, create it."
