@@ -79,7 +79,7 @@ Store as `<host>`.
 **Precondition 5 — Confirm auth and resolve assignee**
 
 ```bash
-gh api user | jq -r '.login'
+gh api user --jq '.login'
 ```
 
 - Non-zero exit → stop:
