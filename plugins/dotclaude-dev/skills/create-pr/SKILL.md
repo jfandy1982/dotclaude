@@ -343,11 +343,15 @@ Loop has no fixed iteration cap — repeat until the author chooses "Looks good,
 
 ```bash
 gh pr create \
-  --title "<title>" \
-  --body "<body>" \
   --assignee @me \
   [--label "<label1>" --label "<label2>" ... for each label in <selected-labels>, omit entirely if empty] \
-  [--draft if <draft-state> is "Draft"]
+  [--draft if <draft-state> is "Draft"] \
+  --title "<title>" \
+  --body-file - <<'EOF'
+<body>
+EOF
 ```
+
+Pass `<body>` through the quoted heredoc (`<<'EOF'`), never inside a double-quoted `--body` argument — the body contains backticks, which the shell would otherwise run as command substitutions. If `<body>` itself contains a line that is exactly `EOF`, use a different delimiter.
 
 Display the PR URL returned by the command.
