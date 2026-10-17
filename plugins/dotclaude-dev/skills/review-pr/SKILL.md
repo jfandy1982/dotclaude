@@ -68,14 +68,14 @@ Store the printed login as `<username>`.
 **Precondition 5 — Origin repository**
 
 ```bash
-gh repo view <origin-url> --json url --jq '.url'
+gh repo view <origin-url> --json url,nameWithOwner --jq '.url, .nameWithOwner'
 ```
 
 Non-zero exit → stop:
 
 > "`origin` `<origin-url>` is not a GitHub repository on `<host>`, or you lack access to it."
 
-Store the printed URL as `<repo-url>`. It is the canonical `https://<host>/<owner>/<repo>`, also when `origin` still uses an old name of a renamed repository.
+Store the first printed line as `<repo-url>` and the second as `<repo-path>` (`<owner>/<repo>`). `<repo-url>` is the canonical `https://<host>/<repo-path>`, also when `origin` still uses an old name of a renamed repository.
 
 **Precondition 6 — Fetch the PR**
 
@@ -90,6 +90,8 @@ Non-zero exit → stop:
 > "Cannot create a temporary file for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/review-pr`."
 
 Store the printed path as `<pr-file>`. Nothing deletes it; the operating system cleans up its temporary folder.
+
+`<pr-file>` is also the prefix of everything else collected for this PR: later steps write `<pr-file>.<scope>.json` next to it, and whoever needs the collected data lists `<pr-file>*` to find all of it. A missing file means that part was not collected.
 
 Then fetch the PR into it and print everything but the bulky fields:
 
@@ -154,6 +156,81 @@ This gate never stops the skill. When `<pr.author.login>` equals `<username>` (i
 `<pr.hasFileRisk>` is not `true` → stop:
 
 > "PR `<pr.number>` has no `## File risk` section. review-pr only works on PRs created via `/create-pr` — open the PR through that skill, or add the section manually, then retry."
+
+## PR context
+
+Collects what the reviewers need to know about the PR. It runs after the content gates, so nothing is collected for a skipped or stopped PR. Nothing in this section stops the skill: whatever is missing or cannot be read is a warning. The body sections below print a summary; linked issues, CI status and prior feedback are only collected, so they print nothing unless a warning applies.
+
+### Body sections
+
+Reads the sections `create-pr` writes into the PR body from `<pr-file>`. One command extracts everything:
+
+```bash
+jq -c 'def section($s): .body | capture("(?ms)^## " + $s + "[ \t]*\r?\n(?<t>.*?)(?=^## |\\z)").t // null;
+  def trim: sub("^\\s+|\\s+$"; ""; "g");
+  (section("File risk") // "") as $risk
+  | {
+      fileRisk: ($risk | [scan("(?m)^### (?:🔴 Critical|🟡 Medium|🟢 Low)[ \t]*\r?$|^- `[^`]+` — [^\r\n]*")]
+        | reduce .[] as $l ({bucket: null, out: {Critical: [], Medium: [], Low: []}};
+            if ($l | startswith("###")) then .bucket = ($l | sub("^### [^ ]+ "; "") | trim)
+            elif .bucket then .out[.bucket] += [$l | sub("^- "; "")]
+            else . end)
+        | .out),
+      fileRiskRaw: ($risk | trim),
+      mergeDanger: (section("Merge danger") | if . then trim else null end),
+      closes: (section("Closes") // "" | [scan("(?i)(?:closes|fixes|resolves) #([0-9]+)")] | map(.[0])),
+      closesRaw: (section("Closes") // "" | trim)
+    }' <pr-file>
+```
+
+Store the result as `<context>`. A missing bucket is an empty bucket. A `mergeDanger` of `null` means a two-way change. Only the keyword form `Closes #<number>` counts as a linked issue, as `create-pr` writes it.
+
+Print the one-line summary as its own message: `PR context: File risk <critical> critical · <medium> medium · <low> low · Merge danger: <one-way or none> · Closes: <#numbers or none>`, with the counts from `<context.fileRisk>`.
+
+Then print each warning that applies, as its own line:
+
+- All three `<context.fileRisk>` buckets are empty → "Warning: the `## File risk` section has no file entries in the expected format, so the review has no per-file risk. Its raw text is kept as context."
+- `<context.closes>` is empty while `<context.closesRaw>` is not → "Warning: the `## Closes` section has no `Closes #<number>` line, so no linked issue is read."
+
+### Linked issues
+
+`<context.closes>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The output is captured first, so a failed read leaves no empty file behind:
+
+```bash
+issue=$(gh issue view <issue-number> --repo <repo-url> --json number,title,state,body,labels) && printf '%s\n' "$issue" > <pr-file>.issue-<issue-number>.json && jq -r '"#\(.number) \(.title) (\(.state))"' <pr-file>.issue-<issue-number>.json
+```
+
+Non-zero exit for an issue → print "Warning: linked issue #`<issue-number>` could not be read." and go on without it. Store the printed lines as `<linked-issues>`, one line per issue. The details stay in the files.
+
+### CI status
+
+```bash
+gh pr view <pr.number> --repo <repo-url> --json statusCheckRollup --jq '
+  [.statusCheckRollup[] | {name: (.name // .context),
+     state: (if (.status // "COMPLETED") != "COMPLETED" or (.conclusion // .state) == "PENDING" then "pending"
+             elif ((.conclusion // .state) | IN("SUCCESS", "SKIPPED", "NEUTRAL")) then "passed"
+             else "failed" end)}]
+  | {passed: (map(select(.state == "passed")) | length),
+     failed: [.[] | select(.state == "failed") | .name],
+     pending: [.[] | select(.state == "pending") | .name]}'
+```
+
+Non-zero exit → print "Warning: the CI status of PR `<pr.number>` could not be read." and leave `<ci-status>` unset. Otherwise store the printed JSON as `<ci-status>`. A PR without any check is normal: nothing passed, failed or pending. Do not wait for pending checks.
+
+### Prior feedback
+
+Everything already said on the PR, by anyone: comments, review summaries and inline comments on the diff.
+
+```bash
+discussion=$(gh pr view <pr.number> --repo <repo-url> --json comments,reviews --jq '{
+  comments: [.comments[] | {author: .author.login, body}],
+  reviews: [.reviews[] | select(.body != "") | {author: .author.login, state, body}]}') \
+&& inline=$(gh api repos/<repo-path>/pulls/<pr.number>/comments --hostname <host> --jq '[.[] | {author: .user.login, path, line, body}]') \
+&& jq -n --argjson discussion "$discussion" --argjson inline "$inline" '{discussion: $discussion, inline: $inline}' > <pr-file>.feedback.json \
+&& jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"' <pr-file>.feedback.json
+```
+
+Non-zero exit → print "Warning: the existing comments of PR `<pr.number>` could not be read, so findings are not checked against them." and write no file. Otherwise store the printed counts as `<prior-feedback>`. The comments themselves stay in the file, which can be long.
 
 ## Review scope
 
