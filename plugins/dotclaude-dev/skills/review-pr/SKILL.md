@@ -1,7 +1,7 @@
 ---
 name: review-pr
 description: Use when reviewing an open pull request created via create-pr, or when asked for a multi-angle review (simplification, silent failures, tests, comments, types) of such a PR.
-compatibility: Requires git, gh CLI and internet access to GitHub
+compatibility: Requires git, gh CLI, jq and internet access to GitHub
 argument-hint: '[pr-number-or-url] [review-scope]'
 ---
 
@@ -79,6 +79,20 @@ Store the printed URL as `<repo-url>`. It is the canonical `https://<host>/<owne
 
 **Precondition 6 — Fetch the PR**
 
+The PR is saved to a temporary file, so later steps can read parts of it with `jq` instead of carrying all of it in the conversation. First create the file:
+
+```bash
+d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp "$d/review-pr-XXXXXX"
+```
+
+Non-zero exit → stop:
+
+> "Cannot create a temporary file for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/review-pr`."
+
+Store the printed path as `<pr-file>`. Nothing deletes it; the operating system cleans up its temporary folder.
+
+Then fetch the PR into it and print everything but the bulky fields:
+
 ```bash
 gh pr view <pr-arg> --repo <repo-url> \
   --json number,url,title,body,labels,files,author,state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles \
@@ -86,16 +100,16 @@ gh pr view <pr-arg> --repo <repo-url> \
     sameRepo:     (.url | test("^\\Q<repo-url>/pull/\\E"; "i")),
     isDeployment: any(.labels[]; .name == "type: deployment"),
     hasFileRisk:  (.body | test("(?im)^[ \t]*## file risk[ \t]*\r?$"))
-  }'
+  }' > <pr-file> && jq 'del(.body, .files)' <pr-file>
 ```
 
-The `--jq` keeps every fetched field and adds computed checks, so later steps read them instead of judging the raw values.
+The `--jq` keeps every fetched field and adds computed checks, so later steps read them instead of judging the raw values. The `&&` keeps a failed fetch from printing anything.
 
 Non-zero exit → stop:
 
 > "`<pr-arg>` could not be fetched as a PR of `<repo-url>` — it may not exist, may not be a PR number or URL, or you may lack access."
 
-Store the result as `<pr>`. Reuse `<pr>` in later steps, do not re-fetch.
+Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-file>` in later steps, do not re-fetch. `<pr.body>` and `<pr.files>` are not in `<pr>`; read them from `<pr-file>` when needed.
 
 **Precondition 7 — PR belongs to origin**
 
