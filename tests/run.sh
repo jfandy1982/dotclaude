@@ -13,14 +13,17 @@ failed=0
 
 # check <name> <actual-json> <expected-json>: equal after key sorting
 check() {
-  if jq -S . "$2" > "$tmp/a" 2>/dev/null && jq -S . "$3" > "$tmp/b" && diff "$tmp/a" "$tmp/b" > "$tmp/diff"; then
-    echo "ok    $1"
+  local name=$1 actual=$2 expected=$3
+  : > "$tmp/diff"
+  if jq -S . "$actual" > "$tmp/a" 2>/dev/null && jq -S . "$expected" > "$tmp/b" && diff "$tmp/a" "$tmp/b" > "$tmp/diff"; then
+    echo "ok    $name"
     passed=$((passed + 1))
   else
-    echo "FAIL  $1"
+    echo "FAIL  $name"
     sed 's/^/        /' "$tmp/diff"
     failed=$((failed + 1))
   fi
+  return 0
 }
 
 for f in "$fixtures"/body/*.txt; do
@@ -35,4 +38,4 @@ jq -Rs -f "$parser" "$tmp/crlf.txt" > "$tmp/actual.json" 2>"$tmp/err" || cat "$t
 check "body/full-valid (CRLF)" "$tmp/actual.json" "$fixtures/body/full-valid.json"
 
 echo "$passed passed, $failed failed"
-[ "$failed" -eq 0 ]
+[[ "$failed" -eq 0 ]]
