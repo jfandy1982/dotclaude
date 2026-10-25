@@ -25,6 +25,7 @@
     "argjson",
     "claude",
     "dotclaude",
+    "endswith",
     "gsub",
     "jfandy1982",
     "pathspec",
