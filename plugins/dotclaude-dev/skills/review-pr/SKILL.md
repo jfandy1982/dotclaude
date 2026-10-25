@@ -79,21 +79,21 @@ Store the first printed line as `<repo-url>` and the second as `<repo-path>` (`<
 
 **Precondition 6 — Fetch the PR**
 
-The PR is saved to a temporary file, so later steps can read parts of it with `jq` instead of carrying all of it in the conversation. First create the file:
+What is collected for the PR is saved in a temporary folder, so later steps can read parts of it with `jq` instead of carrying all of it in the conversation. First create the folder:
 
 ```bash
-d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp "$d/review-pr-XXXXXX"
+d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp -d "$d/review-pr-XXXXXX"
 ```
 
 Non-zero exit → stop:
 
-> "Cannot create a temporary file for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/review-pr`."
+> "Cannot create a temporary folder for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/review-pr`."
 
-Store the printed path as `<pr-file>`. Nothing deletes it; the operating system cleans up its temporary folder.
+Store the printed path as `<pr-dir>`. Do not delete it.
 
-`<pr-file>` is also the prefix of everything else collected for this PR: the PR body is in `<pr-file>.body.txt`, later steps write `<pr-file>.<scope>.json` next to it, and whoever needs the collected data lists `<pr-file>*` to find all of it. A missing file means that part was not collected.
+The folder holds `pr.json` (the PR), `body.txt` (the PR body), and later steps add `issue-<number>.json` and `feedback.json`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again, and a resumed review restores the worktree, not the collected data.
 
-Then fetch the PR into it and print everything but the bulky fields:
+Then fetch the PR into `pr.json` and print everything but the bulky fields:
 
 ```bash
 gh pr view <pr-arg> --repo <repo-url> \
@@ -101,7 +101,7 @@ gh pr view <pr-arg> --repo <repo-url> \
   --jq '. + {
     sameRepo:     (.url | test("^\\Q<repo-url>/pull/\\E"; "i")),
     isDeployment: any(.labels[]; .name == "type: deployment")
-  }' > <pr-file> && jq -r '.body // ""' <pr-file> > <pr-file>.body.txt && jq 'del(.body, .files)' <pr-file>
+  }' > <pr-dir>/pr.json && jq -r '.body // ""' <pr-dir>/pr.json > <pr-dir>/body.txt && jq 'del(.body, .files)' <pr-dir>/pr.json
 ```
 
 The `--jq` keeps every fetched field and adds computed checks, so later steps read them instead of judging the raw values. The `&&` keeps a failed fetch from printing anything. The body gets its own file, because the body parser reads text, not JSON.
@@ -110,7 +110,7 @@ Non-zero exit → stop:
 
 > "`<pr-arg>` could not be fetched as a PR of `<repo-url>` — it may not exist, may not be a PR number or URL, or you may lack access."
 
-Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-file>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-file>` when needed. The body is in `<pr-file>.body.txt`.
+Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-dir>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-dir>/pr.json` when needed. The body is in `<pr-dir>/body.txt`.
 
 **Precondition 7 — PR belongs to origin**
 
@@ -136,7 +136,7 @@ A PR URL makes `gh pr view` fetch from the repository in that URL, ignoring `--r
 
 ## Content gates
 
-Checked in order, after all preconditions have passed. They look at the content of the PR, not at the environment, using `<pr>` and the body file from Precondition 6.
+Checked in order, after all preconditions have passed. They look at the content of the PR, not at the environment, using `<pr>` and `<pr-dir>/body.txt` from Precondition 6.
 
 **Gate 1 — Reviewer is the author (warning only)**
 
@@ -155,7 +155,7 @@ This gate never stops the skill. When `<pr.author.login>` equals `<username>` (i
 Reads the sections `create-pr` writes into the PR body. The format is defined in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`.
 
 ```bash
-jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-file>.body.txt
+jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-dir>/body.txt
 ```
 
 Non-zero exit → stop:
@@ -186,10 +186,10 @@ Then print each warning that applies, as its own line:
 `<context.closes.numbers>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The output is captured first, so a failed read leaves no empty file behind:
 
 ```bash
-issue=$(gh issue view <issue-number> --repo <repo-url> --json number,title,state,body,labels) && printf '%s\n' "$issue" > <pr-file>.issue-<issue-number>.json && jq -r '"#\(.number) \(.title) (\(.state))"' <pr-file>.issue-<issue-number>.json
+issue=$(gh issue view <issue-number> --repo <repo-url> --json number,title,state,body,labels) && printf '%s\n' "$issue" > <pr-dir>/issue-<issue-number>.json && jq -r '"#\(.number) \(.title) (\(.state))"' <pr-dir>/issue-<issue-number>.json
 ```
 
-Non-zero exit for an issue → print "Warning: linked issue #`<issue-number>` could not be read." and go on without it. Store the printed lines as `<linked-issues>`, one line per issue. The details stay in the files.
+Non-zero exit for an issue → print "Warning: linked issue #`<issue-number>` could not be read." and go on without it. Store the printed lines as `<linked-issues>`, one line per issue. The details stay in `<pr-dir>`.
 
 ### CI status
 
@@ -215,11 +215,11 @@ discussion=$(gh pr view <pr.number> --repo <repo-url> --json comments,reviews --
   comments: [.comments[] | {author: .author.login, body}],
   reviews: [.reviews[] | select(.body != "") | {author: .author.login, state, body}]}') \
 && inline=$(gh api repos/<repo-path>/pulls/<pr.number>/comments --hostname <host> --jq '[.[] | {author: .user.login, path, line, body}]') \
-&& jq -n --argjson discussion "$discussion" --argjson inline "$inline" '{discussion: $discussion, inline: $inline}' > <pr-file>.feedback.json \
-&& jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"' <pr-file>.feedback.json
+&& jq -n --argjson discussion "$discussion" --argjson inline "$inline" '{discussion: $discussion, inline: $inline}' > <pr-dir>/feedback.json \
+&& jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"' <pr-dir>/feedback.json
 ```
 
-Non-zero exit → print "Warning: the existing comments of PR `<pr.number>` could not be read, so findings are not checked against them." and write no file. Otherwise store the printed counts as `<prior-feedback>`. The comments themselves stay in the file, which can be long.
+Non-zero exit → print "Warning: the existing comments of PR `<pr.number>` could not be read, so findings are not checked against them." and write no file. Otherwise store the printed counts as `<prior-feedback>`. The comments themselves stay in `<pr-dir>/feedback.json`, which can be long.
 
 ## Review scope
 
