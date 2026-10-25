@@ -1,0 +1,5 @@
+{
+  "closes": { "numbers": [], "state": "missing" },
+  "fileRisk": { "Critical": [], "Low": ["`a.md` — typo"], "Medium": [], "state": "ok" },
+  "mergeDanger": null
+}

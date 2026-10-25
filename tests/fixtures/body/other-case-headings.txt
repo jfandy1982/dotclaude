@@ -1,0 +1,17 @@
+## WHAT
+
+x
+
+## FILE RISK
+
+### 🔴 CRITICAL
+
+- `A.ts` — auth change
+
+### 🟡 medium
+
+### 🟢 Low
+
+## closes
+
+closes #7

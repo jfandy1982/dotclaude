@@ -1,0 +1,21 @@
+## What
+
+Adds a retry with backoff to the sync job.
+
+## Why
+
+Sync runs fail on timeouts and nobody notices.
+
+## File risk
+
+### 🔴 Critical
+
+### 🟡 Medium
+
+- `src/sync/job.ts` — retry with backoff on timeout
+
+### 🟢 Low
+
+- `package-lock.json` — lockfile refreshed, no `package.json` change
+- `src/sync/job.test.ts` — covers the retry
+- `README.md` — documents the retry setting

@@ -1,0 +1,10 @@
+{
+  "closes": { "numbers": [38, 42], "state": "ok" },
+  "fileRisk": {
+    "Critical": ["`db/migrations/0042_drop_users_legacy_id.sql` — drops legacy column"],
+    "Low": ["`README.md` — docs", "`src/Users/Mixed-Case.ts` — path keeps its case"],
+    "Medium": ["`src/users/user.service.ts` — new lookup method"],
+    "state": "ok"
+  },
+  "mergeDanger": "Drops column `users.legacy_id`; reverting the PR won't restore the data."
+}

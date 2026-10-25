@@ -1,0 +1,5 @@
+{
+  "closes": { "numbers": [7], "state": "ok" },
+  "fileRisk": { "Critical": ["`A.ts` — auth change"], "Low": [], "Medium": [], "state": "ok" },
+  "mergeDanger": null
+}

@@ -91,7 +91,7 @@ Non-zero exit → stop:
 
 Store the printed path as `<pr-file>`. Nothing deletes it; the operating system cleans up its temporary folder.
 
-`<pr-file>` is also the prefix of everything else collected for this PR: later steps write `<pr-file>.<scope>.json` next to it, and whoever needs the collected data lists `<pr-file>*` to find all of it. A missing file means that part was not collected.
+`<pr-file>` is also the prefix of everything else collected for this PR: the PR body is in `<pr-file>.body.txt`, later steps write `<pr-file>.<scope>.json` next to it, and whoever needs the collected data lists `<pr-file>*` to find all of it. A missing file means that part was not collected.
 
 Then fetch the PR into it and print everything but the bulky fields:
 
@@ -100,18 +100,17 @@ gh pr view <pr-arg> --repo <repo-url> \
   --json number,url,title,body,labels,files,author,state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles \
   --jq '. + {
     sameRepo:     (.url | test("^\\Q<repo-url>/pull/\\E"; "i")),
-    isDeployment: any(.labels[]; .name == "type: deployment"),
-    hasFileRisk:  (.body | test("(?im)^[ \t]*## file risk[ \t]*\r?$"))
-  }' > <pr-file> && jq 'del(.body, .files)' <pr-file>
+    isDeployment: any(.labels[]; .name == "type: deployment")
+  }' > <pr-file> && jq -r '.body // ""' <pr-file> > <pr-file>.body.txt && jq 'del(.body, .files)' <pr-file>
 ```
 
-The `--jq` keeps every fetched field and adds computed checks, so later steps read them instead of judging the raw values. The `&&` keeps a failed fetch from printing anything.
+The `--jq` keeps every fetched field and adds computed checks, so later steps read them instead of judging the raw values. The `&&` keeps a failed fetch from printing anything. The body gets its own file, because the body parser reads text, not JSON.
 
 Non-zero exit → stop:
 
 > "`<pr-arg>` could not be fetched as a PR of `<repo-url>` — it may not exist, may not be a PR number or URL, or you may lack access."
 
-Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-file>` in later steps, do not re-fetch. `<pr.body>` and `<pr.files>` are not in `<pr>`; read them from `<pr-file>` when needed.
+Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-file>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-file>` when needed. The body is in `<pr-file>.body.txt`.
 
 **Precondition 7 — PR belongs to origin**
 
@@ -137,7 +136,7 @@ A PR URL makes `gh pr view` fetch from the repository in that URL, ignoring `--r
 
 ## Content gates
 
-Checked in order, after all preconditions have passed. They look at the content of the PR, not at the environment, using `<pr>` from Precondition 6.
+Checked in order, after all preconditions have passed. They look at the content of the PR, not at the environment, using `<pr>` and the body file from Precondition 6.
 
 **Gate 1 — Reviewer is the author (warning only)**
 
@@ -153,7 +152,17 @@ This gate never stops the skill. When `<pr.author.login>` equals `<username>` (i
 
 **Gate 3 — File risk section**
 
-`<pr.hasFileRisk>` is not `true` → stop:
+Reads the sections `create-pr` writes into the PR body. The format is defined in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`.
+
+```bash
+jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-file>.body.txt
+```
+
+Non-zero exit → stop:
+
+> "The body of PR `<pr.number>` could not be read. Re-run `/review-pr`."
+
+Store the printed JSON as `<context>`. `<context.fileRisk.state>` is `missing` → stop:
 
 > "PR `<pr.number>` has no `## File risk` section. review-pr only works on PRs created via `/create-pr` — open the PR through that skill, or add the section manually, then retry."
 
@@ -163,38 +172,18 @@ Collects what the reviewers need to know about the PR. It runs after the content
 
 ### Body sections
 
-Reads the sections `create-pr` writes into the PR body from `<pr-file>`. One command extracts everything:
+Prints the summary of `<context>` from Gate 3. A `<context.mergeDanger>` of `null` means a two-way change.
 
-```bash
-jq -c 'def section($s): .body | capture("(?ms)^## " + $s + "[ \t]*\r?\n(?<t>.*?)(?=^## |\\z)").t // null;
-  def trim: sub("^\\s+|\\s+$"; ""; "g");
-  (section("File risk") // "") as $risk
-  | {
-      fileRisk: ($risk | [scan("(?m)^### (?:🔴 Critical|🟡 Medium|🟢 Low)[ \t]*\r?$|^- `[^`]+` — [^\r\n]*")]
-        | reduce .[] as $l ({bucket: null, out: {Critical: [], Medium: [], Low: []}};
-            if ($l | startswith("###")) then .bucket = ($l | sub("^### [^ ]+ "; "") | trim)
-            elif .bucket then .out[.bucket] += [$l | sub("^- "; "")]
-            else . end)
-        | .out),
-      fileRiskRaw: ($risk | trim),
-      mergeDanger: (section("Merge danger") | if . then trim else null end),
-      closes: (section("Closes") // "" | [scan("(?i)(?:closes|fixes|resolves) #([0-9]+)")] | map(.[0])),
-      closesRaw: (section("Closes") // "" | trim)
-    }' <pr-file>
-```
-
-Store the result as `<context>`. A missing bucket is an empty bucket. A `mergeDanger` of `null` means a two-way change. Only the keyword form `Closes #<number>` counts as a linked issue, as `create-pr` writes it.
-
-Print the one-line summary as its own message: `PR context: File risk <critical> critical · <medium> medium · <low> low · Merge danger: <one-way or none> · Closes: <#numbers or none>`, with the counts from `<context.fileRisk>`.
+Print the one-line summary as its own message: `PR context: File risk <critical> critical · <medium> medium · <low> low · Merge danger: <one-way or none> · Closes: <#numbers or none>`, with the counts from `<context.fileRisk>` and the numbers from `<context.closes.numbers>`.
 
 Then print each warning that applies, as its own line:
 
-- All three `<context.fileRisk>` buckets are empty → "Warning: the `## File risk` section has no file entries in the expected format, so the review has no per-file risk. Its raw text is kept as context."
-- `<context.closes>` is empty while `<context.closesRaw>` is not → "Warning: the `## Closes` section has no `Closes #<number>` line, so no linked issue is read."
+- `<context.fileRisk.state>` is `empty` → "Warning: the `## File risk` section has no file entries in the expected format, so the review has no per-file risk. Its raw text is kept as context."
+- `<context.closes.state>` is `unparsed` → "Warning: the `## Closes` section has no `Closes #<number>` line, so no linked issue is read."
 
 ### Linked issues
 
-`<context.closes>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The output is captured first, so a failed read leaves no empty file behind:
+`<context.closes.numbers>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The output is captured first, so a failed read leaves no empty file behind:
 
 ```bash
 issue=$(gh issue view <issue-number> --repo <repo-url> --json number,title,state,body,labels) && printf '%s\n' "$issue" > <pr-file>.issue-<issue-number>.json && jq -r '"#\(.number) \(.title) (\(.state))"' <pr-file>.issue-<issue-number>.json

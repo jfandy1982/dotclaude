@@ -1,0 +1,5 @@
+## File risks
+
+### 🔴 Critical
+
+- `a.ts` — x

@@ -1,0 +1,13 @@
+## File risk
+
+### 🔴 Critical
+
+- `a.ts` — x
+
+### Notes
+
+- `not-a-bucket.ts` — must not land in Critical
+
+### 🟢 Low
+
+- `b.ts` — y
