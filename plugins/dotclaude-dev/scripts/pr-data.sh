@@ -36,10 +36,12 @@ emit_error() {
 die() {
   local what=$1 message=$2
   emit_error other 1 false "$what" "$message"
+  return 0
 }
 
 usage() {
   emit_error usage 2 false "arguments" "Wrong arguments. Usage: pr-data.sh pr|issue|ci|feedback <arguments>, see the header of the script."
+  return 0
 }
 
 # fail <what> <gh-exit-code>: classify the captured gh error output and exit
@@ -59,6 +61,7 @@ fail() {
     emit_error network 13 true "$what" "Could not read $what: cannot reach $HOST. Check the connection, then re-run."
   fi
   emit_error other 1 false "$what" "Could not read $what: ${first:-gh exited with code $code}."
+  return 0
 }
 
 # run_gh <what> <gh-arguments...>: stores stdout in OUT; a failed call never reaches the caller
@@ -110,6 +113,7 @@ cmd_pr() {
   write_file "$dir" pr.json "$json"
   write_file "$dir" body.txt "$body"
   printf '%s' "$json" | jq 'del(.body, .files, .comments, .reviews, .statusCheckRollup)'
+  return $?
 }
 
 cmd_issue() {
@@ -119,6 +123,7 @@ cmd_issue() {
   run_gh "issue #$number" issue view "$number" --repo "$repo_url" --json number,title,state,body,labels
   write_file "$dir" "issue-$number.json" "$OUT"
   printf '%s' "$OUT" | jq -r '"#\(.number) \(.title) (\(.state))"'
+  return $?
 }
 
 cmd_ci() {
@@ -133,6 +138,7 @@ cmd_ci() {
        failed: [.[] | select(.state == "failed") | .name],
        pending: [.[] | select(.state == "pending") | .name]}' "$dir/pr.json" ||
     die "CI status" "Cannot read the CI status in $dir/pr.json."
+  return 0
 }
 
 cmd_feedback() {
@@ -151,6 +157,7 @@ cmd_feedback() {
     die "prior feedback" "Cannot read the comments in $dir/pr.json."
   write_file "$dir" feedback.json "$result"
   printf '%s' "$result" | jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"'
+  return $?
 }
 
 main() {
@@ -163,6 +170,7 @@ main() {
     feedback) [[ $# -eq 4 ]] || usage; cmd_feedback "$@" ;;
     *) usage ;;
   esac
+  return $?
 }
 
 main "$@"
