@@ -1,0 +1,7 @@
+{
+  "comments": [{ "author": { "login": "alice" }, "body": "first" }],
+  "reviews": [
+    { "author": { "login": "bob" }, "state": "COMMENTED", "body": "looks fine" },
+    { "author": { "login": "carol" }, "state": "APPROVED", "body": "" }
+  ]
+}

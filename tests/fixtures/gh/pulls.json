@@ -1,0 +1,4 @@
+{
+  "head": { "sha": "abc123" },
+  "base": { "sha": "base123" }
+}

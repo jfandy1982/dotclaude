@@ -1,0 +1,10 @@
+{
+  "discussion": {
+    "comments": [{ "author": "alice", "body": "first" }],
+    "reviews": [{ "author": "bob", "state": "COMMENTED", "body": "looks fine" }]
+  },
+  "inline": [
+    { "author": "dave", "path": "src/a.ts", "line": 3, "body": "nit" },
+    { "author": "erin", "path": "src/b.ts", "line": null, "body": "outdated" }
+  ]
+}
