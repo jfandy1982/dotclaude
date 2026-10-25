@@ -1,0 +1,13 @@
+worktree /home/dev/my repo
+HEAD main-commit-sha
+branch refs/heads/main
+
+worktree /home/dev/my repo/.claude/worktrees/review-pr-5
+HEAD pr-5-commit-sha
+detached
+prunable gitdir file points to non-existent location
+
+worktree /home/dev/my repo/.claude/worktrees/review-pr-7
+HEAD pr-7-commit-sha
+detached
+

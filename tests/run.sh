@@ -151,6 +151,26 @@ awk '{printf "%s\r\n", $0}' "$fixtures/body/full-valid.txt" > "$tmp/crlf.txt"
 jq -Rs -f "$parser" "$tmp/crlf.txt" > "$tmp/actual.json" 2> "$tmp/err" || cat "$tmp/err"
 check "body/full-valid (CRLF)" "$tmp/actual.json" "$fixtures/body/full-valid.json"
 
+# ---- worktree state ----
+# The fixtures are real `git worktree list --porcelain` output with the paths shortened and the commit ids replaced by readable names,
+# except the prunable entry, which is hand-written
+
+wt_count=$(jq length "$fixtures/worktree/cases.json")
+i=0
+while [[ $i -lt $wt_count ]]; do
+  wt_fixture=$(jq -r ".[$i].fixture" "$fixtures/worktree/cases.json")
+  wt_n=$(jq -r ".[$i].n" "$fixtures/worktree/cases.json")
+  jq ".[$i].expected" "$fixtures/worktree/cases.json" > "$tmp/wt-expected.json"
+  jq -Rs --arg n "$wt_n" -f "$root/plugins/dotclaude-dev/scripts/worktree-state.jq" "$fixtures/worktree/$wt_fixture" > "$tmp/wt-actual.json" 2> "$tmp/err" || cat "$tmp/err"
+  check "worktree/$(jq -r ".[$i].name" "$fixtures/worktree/cases.json")" "$tmp/wt-actual.json" "$tmp/wt-expected.json"
+  i=$((i + 1))
+done
+
+printf '' > "$tmp/empty.txt"
+jq -Rs --arg n 7 -f "$root/plugins/dotclaude-dev/scripts/worktree-state.jq" "$tmp/empty.txt" > "$tmp/wt-actual.json" 2> "$tmp/err" || cat "$tmp/err"
+printf '%s\n' '{"resumed":false,"prune":false,"path":null,"previousHead":null}' > "$tmp/wt-expected.json"
+check "worktree/empty input" "$tmp/wt-actual.json" "$tmp/wt-expected.json"
+
 # ---- pr-data.sh: pr and refs ----
 
 stub=$(new_stub)

@@ -1,0 +1,4 @@
+worktree /home/dev/my repo
+HEAD main-commit-sha
+branch refs/heads/main
+

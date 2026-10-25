@@ -272,23 +272,21 @@ Store the printed commit as `<merge-base>`.
 
 **Step 3 — Enter the worktree**
 
-First check whether this PR already has a worktree:
+First check whether this PR already has a worktree. The program looks for the worktree `review-pr-<pr.number>` in the worktree list:
 
 ```bash
-git worktree list --porcelain
+out=$(git worktree list --porcelain) && printf '%s\n' "$out" | jq -c -Rs --arg n <pr.number> -f "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-state.jq"
 ```
 
 Non-zero exit → stop:
 
 > "Could not list the worktrees of this repository."
 
-A `worktree <path>` line whose path ends with `/.claude/worktrees/review-pr-<pr.number>` means the worktree exists. If its entry is marked `prunable`, run `git worktree prune` and treat it as not existing. Otherwise store `<resumed>` as true and the path as `<existing-path>`, and read the commit it is on:
+Read the printed JSON:
 
-```bash
-git -C <existing-path> rev-parse HEAD
-```
-
-Store the printed commit as `<previous-head>`, but only if the entry has a `detached` line. An entry with a `branch` line instead means an earlier run stopped before Step 4 checked out the PR, so there is no previous review: leave `<previous-head>` unset. No such `worktree` line at all → `<resumed>` is false.
+- `prune` is true → the worktree is registered but its folder is gone. Run `git worktree prune`; `<resumed>` is false.
+- `resumed` is true → store `<resumed>` as true. Store `previousHead` as `<previous-head>`, unless it is `null`: that means an earlier run stopped before Step 4 checked out the PR, so there is no previous review.
+- Otherwise `<resumed>` is false.
 
 Call `EnterWorktree` with the name `review-pr-<pr.number>`. The tool resumes an existing worktree of that name, so a new and a resumed worktree use the same call. The tool fails → stop:
 
