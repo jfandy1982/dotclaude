@@ -81,13 +81,15 @@ expect_absent() {
 # new_stub: a fresh folder of canned answers for the fake gh
 new_stub() {
   mktemp -d "$tmp/stub-XXXXXX"
+  return $?
 }
 
 # fail_stub <stub-dir> <command> <exit-code> <stderr-text> [stdout-text]
 fail_stub() {
-  printf '%s\n' "$4" > "$1/$2.err"
-  printf '%s\n' "$3" > "$1/$2.exit"
-  [[ $# -lt 5 ]] || printf '%s\n' "$5" > "$1/$2.out"
+  local dir=$1 name=$2 code=$3 text=$4 body=${5:-}
+  printf '%s\n' "$text" > "$dir/$name.err"
+  printf '%s\n' "$code" > "$dir/$name.exit"
+  [[ $# -lt 5 ]] || printf '%s\n' "$body" > "$dir/$name.out"
   return 0
 }
 
