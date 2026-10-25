@@ -1,0 +1,75 @@
+[
+  {
+    "name": "no review worktree, only the main one",
+    "fixture": "only-main.txt",
+    "n": "7",
+    "expected": { "resumed": false, "prune": false, "path": null, "previousHead": null }
+  },
+  {
+    "name": "detached worktree: resumed, previous head is its commit (path with a space)",
+    "fixture": "several.txt",
+    "n": "7",
+    "expected": {
+      "resumed": true,
+      "prune": false,
+      "path": "/home/dev/my repo/.claude/worktrees/review-pr-7",
+      "previousHead": "pr-7-commit-sha"
+    }
+  },
+  {
+    "name": "worktree still on its branch: resumed, no previous head",
+    "fixture": "several.txt",
+    "n": "9",
+    "expected": {
+      "resumed": true,
+      "prune": false,
+      "path": "/home/dev/my repo/.claude/worktrees/review-pr-9",
+      "previousHead": null
+    }
+  },
+  {
+    "name": "a two-digit number matches only itself",
+    "fixture": "several.txt",
+    "n": "17",
+    "expected": {
+      "resumed": true,
+      "prune": false,
+      "path": "/home/dev/my repo/.claude/worktrees/review-pr-17",
+      "previousHead": "pr-17-commit-sha"
+    }
+  },
+  {
+    "name": "number 1 does not match review-pr-17",
+    "fixture": "several.txt",
+    "n": "1",
+    "expected": { "resumed": false, "prune": false, "path": null, "previousHead": null }
+  },
+  {
+    "name": "other worktrees only",
+    "fixture": "several.txt",
+    "n": "8",
+    "expected": { "resumed": false, "prune": false, "path": null, "previousHead": null }
+  },
+  {
+    "name": "prunable entry (hand-written, git's documented format): prune, not resumed",
+    "fixture": "prunable.txt",
+    "n": "5",
+    "expected": {
+      "resumed": false,
+      "prune": true,
+      "path": "/home/dev/my repo/.claude/worktrees/review-pr-5",
+      "previousHead": null
+    }
+  },
+  {
+    "name": "prunable entry of another PR does not affect this one",
+    "fixture": "prunable.txt",
+    "n": "7",
+    "expected": {
+      "resumed": true,
+      "prune": false,
+      "path": "/home/dev/my repo/.claude/worktrees/review-pr-7",
+      "previousHead": "pr-7-commit-sha"
+    }
+  }
+]
