@@ -1,0 +1,35 @@
+## What
+
+Adds a thing.
+
+## Why
+
+Because.
+
+## File risk
+
+### 🔴 Critical
+
+- `db/migrations/0042_drop_users_legacy_id.sql` — drops legacy column
+
+### 🟡 Medium
+
+- `src/users/user.service.ts` — new lookup method
+
+### 🟢 Low
+
+- `README.md` — docs
+- `src/Users/Mixed-Case.ts` — path keeps its case
+
+## Merge danger
+
+Drops column `users.legacy_id`; reverting the PR won't restore the data.
+
+## Closes
+
+Closes #38
+Closes #42
+
+## PR checklist
+
+- [ ] Update the docs

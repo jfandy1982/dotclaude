@@ -1,0 +1,11 @@
+## File risk
+
+### Critical
+
+- `a.ts` — x
+
+### Medium
+
+### Low
+
+- `b.ts` — y

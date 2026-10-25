@@ -1,0 +1,6 @@
+{
+  "closes": { "numbers": [1], "state": "ok" },
+  "fileRisk": { "Critical": [], "Low": [], "Medium": [], "state": "empty" },
+  "fileRiskRaw": "### 🔴 Critical\n\n### 🟡 Medium\n\n### 🟢 Low",
+  "mergeDanger": null
+}

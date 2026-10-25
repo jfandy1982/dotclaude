@@ -1,0 +1,13 @@
+## File risk 	
+
+### 🔴 Critical  
+
+- `a.ts` — x
+
+### 🟡 Medium	
+
+### 🟢 Low 
+
+## Closes  
+
+Closes #3

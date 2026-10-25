@@ -1,0 +1,5 @@
+{
+  "closes": { "numbers": [], "state": "missing" },
+  "fileRisk": { "Critical": [], "Low": [], "Medium": [], "state": "missing" },
+  "mergeDanger": null
+}

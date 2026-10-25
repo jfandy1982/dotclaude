@@ -1,0 +1,17 @@
+## What
+
+x
+
+## Why
+
+y
+
+## File risk
+
+### 🔴 Critical
+
+### 🟡 Medium
+
+### 🟢 Low
+
+- `a.md` — typo
