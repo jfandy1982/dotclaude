@@ -1,0 +1,52 @@
+[
+  {
+    "name": "all passed",
+    "in": {
+      "statusCheckRollup": [
+        { "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS" },
+        { "context": "ci/status", "state": "SUCCESS" }
+      ]
+    },
+    "expected": { "passed": 2, "failed": [], "pending": [] }
+  },
+  {
+    "name": "one failed",
+    "in": {
+      "statusCheckRollup": [
+        { "name": "test", "status": "COMPLETED", "conclusion": "FAILURE" },
+        { "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS" }
+      ]
+    },
+    "expected": { "passed": 1, "failed": ["test"], "pending": [] }
+  },
+  {
+    "name": "in progress",
+    "in": { "statusCheckRollup": [{ "name": "build", "status": "IN_PROGRESS", "conclusion": null }] },
+    "expected": { "passed": 0, "failed": [], "pending": ["build"] }
+  },
+  {
+    "name": "expected status context",
+    "in": { "statusCheckRollup": [{ "context": "required/check", "state": "EXPECTED" }] },
+    "expected": { "passed": 0, "failed": [], "pending": ["required/check"] }
+  },
+  {
+    "name": "skipped and neutral",
+    "in": {
+      "statusCheckRollup": [
+        { "name": "a", "status": "COMPLETED", "conclusion": "SKIPPED" },
+        { "name": "b", "status": "COMPLETED", "conclusion": "NEUTRAL" }
+      ]
+    },
+    "expected": { "passed": 2, "failed": [], "pending": [] }
+  },
+  {
+    "name": "empty list",
+    "in": { "statusCheckRollup": [] },
+    "expected": { "passed": 0, "failed": [], "pending": [] }
+  },
+  {
+    "name": "null list",
+    "in": { "statusCheckRollup": null },
+    "expected": { "passed": 0, "failed": [], "pending": [] }
+  }
+]
