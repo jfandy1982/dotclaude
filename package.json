@@ -7,6 +7,7 @@
     "prepare": "husky || true",
     "spell:all:check": "cspell lint --dot --show-suggestions --no-progress --no-must-find-files --config ./.cspell.json .",
     "spell:dict:search": "cspell trace --all --config ./.cspell.json",
+    "test:scripts": "bash tests/run.sh",
     "yaml:all:check": "find .github/workflows -name '*.yml' -exec js-yaml {} \\;"
   },
   "devDependencies": {
