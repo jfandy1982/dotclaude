@@ -17,7 +17,7 @@ Run in order. Stop on first failure. Do not output anything while running precon
 
 Take the PR reference (first argument) and the optional review scope (second argument) from the invocation. If the PR reference is missing, ask: "PR number or URL to review?"
 
-Store the first argument exactly as given as `<pr-arg>`. Do not parse it: `gh pr view` in Precondition 6 resolves PR numbers and PR URLs itself.
+Store the first argument exactly as given as `<pr-arg>`. Do not parse it: Precondition 6 passes it to `gh pr view`, which resolves PR numbers and PR URLs itself.
 
 Store the second argument, if any, as `<scope-arg>`. It is interpreted later, not here.
 
@@ -91,24 +91,17 @@ Non-zero exit → stop:
 
 Store the printed path as `<pr-dir>`. Do not delete it.
 
-The folder holds `pr.json` (the PR), `body.txt` (the PR body), and later steps add `issue-<number>.json` and `feedback.json`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again, and a resumed review restores the worktree, not the collected data.
+The folder holds `pr.json` (the PR with its CI status, comments and reviews), `body.txt` (the PR body), and later steps add `issue-<number>.json` and `feedback.json`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again, and a resumed review restores the worktree, not the collected data.
 
-Then fetch the PR into `pr.json` and print everything but the bulky fields:
+Then fetch the PR in one call. The script writes `pr.json` and `body.txt` and prints everything but the bulky fields (body, files, comments, reviews, CI status):
 
 ```bash
-gh pr view <pr-arg> --repo <repo-url> \
-  --json number,url,title,body,labels,files,author,state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles \
-  --jq '. + {
-    sameRepo:     (.url | test("^\\Q<repo-url>/pull/\\E"; "i")),
-    isDeployment: any(.labels[]; .name == "type: deployment")
-  }' > <pr-dir>/pr.json && jq -r '.body // ""' <pr-dir>/pr.json > <pr-dir>/body.txt && jq 'del(.body, .files)' <pr-dir>/pr.json
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" pr <host> <repo-url> <pr-arg> <pr-dir>
 ```
 
-The `--jq` keeps every fetched field and adds computed checks, so later steps read them instead of judging the raw values. The `&&` keeps a failed fetch from printing anything. The body gets its own file, because the body parser reads text, not JSON.
+`pr.json` keeps every fetched field and adds the base commit `baseRefOid` and the computed checks `sameRepo` and `isDeployment`, so later steps read them instead of judging the raw values. `headRefOid` and `baseRefOid` are the commits the review is based on. The body gets its own file, because the body parser reads text, not JSON.
 
-Non-zero exit → stop:
-
-> "`<pr-arg>` could not be fetched as a PR of `<repo-url>` — it may not exist, may not be a PR number or URL, or you may lack access."
+Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr. This holds for every `pr-data.sh` call in this skill. A stderr without such a line is shown as it is.
 
 Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-dir>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-dir>/pr.json` when needed. The body is in `<pr-dir>/body.txt`.
 
@@ -183,43 +176,35 @@ Then print each warning that applies, as its own line:
 
 ### Linked issues
 
-`<context.closes.numbers>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The output is captured first, so a failed read leaves no empty file behind:
+`<context.closes.numbers>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The script writes `issue-<issue-number>.json` and prints one line:
 
 ```bash
-issue=$(gh issue view <issue-number> --repo <repo-url> --json number,title,state,body,labels) && printf '%s\n' "$issue" > <pr-dir>/issue-<issue-number>.json && jq -r '"#\(.number) \(.title) (\(.state))"' <pr-dir>/issue-<issue-number>.json
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <issue-number> <pr-dir>
 ```
 
-Non-zero exit for an issue → print "Warning: linked issue #`<issue-number>` could not be read." and go on without it. Store the printed lines as `<linked-issues>`, one line per issue. The details stay in `<pr-dir>`.
+Non-zero exit for an issue → print "Warning: " and the `message`, and go on without it. Store the printed lines as `<linked-issues>`, one line per issue. The details stay in `<pr-dir>`.
 
 ### CI status
 
+The status was fetched with the PR; the script reads it from `pr.json`:
+
 ```bash
-gh pr view <pr.number> --repo <repo-url> --json statusCheckRollup --jq '
-  [.statusCheckRollup[] | {name: (.name // .context),
-     state: (if (.status // "COMPLETED") != "COMPLETED" or (.conclusion // .state) == "PENDING" then "pending"
-             elif ((.conclusion // .state) | IN("SUCCESS", "SKIPPED", "NEUTRAL")) then "passed"
-             else "failed" end)}]
-  | {passed: (map(select(.state == "passed")) | length),
-     failed: [.[] | select(.state == "failed") | .name],
-     pending: [.[] | select(.state == "pending") | .name]}'
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" ci <pr-dir>
 ```
 
-Non-zero exit → print "Warning: the CI status of PR `<pr.number>` could not be read." and leave `<ci-status>` unset. Otherwise store the printed JSON as `<ci-status>`. A PR without any check is normal: nothing passed, failed or pending. Do not wait for pending checks.
+Non-zero exit → print "Warning: " and the `message`, and leave `<ci-status>` unset. Otherwise store the printed JSON as `<ci-status>`. A PR without any check is normal: nothing passed, failed or pending. Do not wait for pending checks.
 
 ### Prior feedback
 
 Everything already said on the PR, by anyone: comments, review summaries and inline comments on the diff.
 
+Comments and reviews were fetched with the PR. The script adds all pages of the inline comments, writes `feedback.json` and prints the counts:
+
 ```bash
-discussion=$(gh pr view <pr.number> --repo <repo-url> --json comments,reviews --jq '{
-  comments: [.comments[] | {author: .author.login, body}],
-  reviews: [.reviews[] | select(.body != "") | {author: .author.login, state, body}]}') \
-&& inline=$(gh api repos/<repo-path>/pulls/<pr.number>/comments --hostname <host> --jq '[.[] | {author: .user.login, path, line, body}]') \
-&& jq -n --argjson discussion "$discussion" --argjson inline "$inline" '{discussion: $discussion, inline: $inline}' > <pr-dir>/feedback.json \
-&& jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"' <pr-dir>/feedback.json
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" feedback <host> <repo-path> <pr.number> <pr-dir>
 ```
 
-Non-zero exit → print "Warning: the existing comments of PR `<pr.number>` could not be read, so findings are not checked against them." and write no file. Otherwise store the printed counts as `<prior-feedback>`. The comments themselves stay in `<pr-dir>/feedback.json`, which can be long.
+Non-zero exit → print "Warning: " and the `message`, followed by "Findings are not checked against the existing comments.". The script writes no file then. Otherwise store the printed counts as `<prior-feedback>`. The comments themselves stay in `<pr-dir>/feedback.json`, which can be long.
 
 ## Review scope
 
