@@ -28,9 +28,11 @@
     "endswith",
     "gsub",
     "jfandy1982",
+    "numstat",
     "pathspec",
     "sdlc",
     "startswith",
+    "textconv",
     "tonumber",
     "worktrees"
   ],
