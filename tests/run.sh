@@ -109,6 +109,46 @@ run_data() {
   return 0
 }
 
+# run_plain <script> <arguments...>: runs a script that needs no fake gh (in $PLAIN_DIR when set); same result files as run_data
+run_plain() {
+  local file=$1
+  shift
+  DATA_CODE=0
+  (cd "${PLAIN_DIR:-.}" && bash "$file" "$@") > "$tmp/data.out" 2> "$tmp/data.err" < /dev/null || DATA_CODE=$?
+  return 0
+}
+
+# run_stub <stub-dir> <script> <arguments...>: runs a script with the fake gh and the arguments as given; same result files as run_data
+run_stub() {
+  local stub=$1 file=$2
+  shift 2
+  DATA_CODE=0
+  STUB_GH_DIR="$stub" bash "$file" "$@" > "$tmp/data.out" 2> "$tmp/data.err" < /dev/null || DATA_CODE=$?
+  return 0
+}
+
+# expect_call <name> <stub-dir> <text>: the fake gh was called with this text (fixed string)
+expect_call() {
+  local name=$1 stub=$2 text=$3
+  if grep -qF -- "$text" "$stub/calls.log"; then
+    report "$name" ok
+  else
+    report "$name" fail "want: $text"$'\n'"log:  $(cat "$stub/calls.log")"
+  fi
+  return 0
+}
+
+# expect_no_call <name> <stub-dir> <text>: no call contains this text
+expect_no_call() {
+  local name=$1 stub=$2 text=$3
+  if grep -qF -- "$text" "$stub/calls.log"; then
+    report "$name" fail "unexpected: $text"$'\n'"log:  $(cat "$stub/calls.log")"
+  else
+    report "$name" ok
+  fi
+  return 0
+}
+
 # expect_error <name> <exit-code> <error> <retryable>: the last run_data call failed with one JSON line and nothing on stdout
 expect_error() {
   local name=$1 want=$2 error=$3 retryable=$4 lines
@@ -248,15 +288,16 @@ run_data "$stub" feedback github.com o/r 7 PR_DIR
 SEED_PR_JSON=""
 expect_text "feedback/no comments at all" "$tmp/data.out" "0 comments, 0 reviews, 0 inline comments"
 
-# ---- pr-data.sh: errors ----
-# Every error class through the pr subcommand. The stub also prints an error body on stdout, which must not leak.
+# ---- error contract (gh-contract.sh) ----
+# Every error class, tested once through the pr subcommand of pr-data.sh; pr-create.sh gets the same code by sourcing the file.
+# The stub also prints an error body on stdout, which must not leak.
 
 while IFS='|' read -r label gh_exit stderr_text want_exit error retryable; do
   stub=$(new_stub)
   fail_stub "$stub" pr-view "$gh_exit" "$stderr_text" '{"message":"error body"}'
   run_data "$stub" pr github.com https://github.com/o/r 7 PR_DIR
-  expect_error "pr/$label" "$want_exit" "$error" "$retryable"
-  expect_empty "pr/$label leaves no file" "$PR_DIR"
+  expect_error "contract/$label" "$want_exit" "$error" "$retryable"
+  expect_empty "contract/$label leaves no file" "$PR_DIR"
 done << 'EOF'
 auth by gh exit code 4|4|authentication required|10|auth|false
 auth by HTTP 401|1|gh: Bad credentials (HTTP 401)|10|auth|false
@@ -316,6 +357,124 @@ run_data "$stub" feedback github.com o/r abc PR_DIR
 expect_error "usage/feedback number is not a number" 2 usage false
 run_data "$stub" bogus
 expect_error "usage/unknown subcommand" 2 usage false
+
+# ---- remote-host.sh ----
+
+host_script="$root/plugins/dotclaude-dev/scripts/remote-host.sh"
+while IFS='|' read -r url want; do
+  run_plain "$host_script" --url "$url"
+  expect_text "remote-host/$url" "$tmp/data.out" "$want"
+done << 'EOF'
+https://github.example.com/org/repo.git|github.example.com
+git@github.example.com:org/repo.git|github.example.com
+ssh://git@github.example.com:2222/org/repo.git|github.example.com
+https://user@github.example.com/org/repo|github.example.com
+EOF
+
+run_plain "$host_script" --url "https:///x"
+expect_error "remote-host/no host in the URL" 1 other false
+run_plain "$host_script"
+expect_error "remote-host/no arguments" 2 usage false
+
+# a real remote of a scratch repository
+scratch=$(mktemp -d "$tmp/repo-XXXXXX")
+git init -q "$scratch"
+git -C "$scratch" remote add origin git@github.com:o/r.git
+PLAIN_DIR="$scratch" run_plain "$host_script" origin
+expect_text "remote-host/URL and host of a remote" "$tmp/data.out" $'git@github.com:o/r.git\ngithub.com'
+PLAIN_DIR="$scratch" run_plain "$host_script" nowhere
+expect_error "remote-host/remote does not exist" 1 other false
+
+# ---- pr-create.sh ----
+
+create_script="$root/plugins/dotclaude-dev/scripts/pr-create.sh"
+repo_url=https://github.com/o/r
+
+stub=$(new_stub)
+printf '%s\n' '{"url":"https://github.com/o/r","nameWithOwner":"o/r","defaultBranchRef":{"name":"main"}}' > "$stub/repo-view.out"
+run_stub "$stub" "$create_script" repo github.com git@github.com:o/r.git
+printf '%s\n' '{"url":"https://github.com/o/r","path":"o/r","defaultBranch":"main"}' > "$tmp/create-expected.json"
+check "repo/prints url, path and default branch" "$tmp/data.out" "$tmp/create-expected.json"
+expect_call "repo/asks about the remote URL" "$stub" "repo view git@github.com:o/r.git"
+
+stub=$(new_stub)
+printf '%s\n' '[{"name":"type: bug","description":"Bug"},{"name":"aspect: ui","description":"UI"},{"name":"priority: high","description":"x"}]' > "$stub/label-list.out"
+work=$(mktemp -d "$tmp/work-XXXXXX")
+run_stub "$stub" "$create_script" labels github.com "$repo_url" "$work"
+printf '%s\n' '{"mode":"taxonomy","labels":[{"name":"type: bug","description":"Bug"},{"name":"aspect: ui","description":"UI"}]}' > "$tmp/create-expected.json"
+check "labels/taxonomy mode keeps type: and aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
+check "labels/labels.json holds all labels" "$work/labels.json" "$stub/label-list.out"
+expect_call "labels/limit and repository are passed" "$stub" "label list --repo $repo_url --json name,description --limit 50"
+
+stub=$(new_stub)
+printf '%s\n' '[{"name":"bug","description":"b"},{"name":"help wanted","description":""}]' > "$stub/label-list.out"
+work=$(mktemp -d "$tmp/work-XXXXXX")
+run_stub "$stub" "$create_script" labels github.com "$repo_url" "$work"
+jq -c '{mode: "fallback", labels: .}' "$stub/label-list.out" > "$tmp/create-expected.json"
+check "labels/fallback mode without type: or aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
+
+stub=$(new_stub)
+printf '%s\n' '[]' > "$stub/pr-list.out"
+run_stub "$stub" "$create_script" open-pr github.com "$repo_url" feat/x
+expect_text "open-pr/none" "$tmp/data.out" "[]"
+expect_call "open-pr/asks for the branch and open PRs" "$stub" "pr list --repo $repo_url --head feat/x --state open"
+
+# create: title and body come from files and reach gh unchanged
+title='fix: quote `$TMPDIR` in "paths" $(echo x)'
+stub=$(new_stub)
+printf '%s\n' 'https://github.com/o/r/pull/9' > "$stub/pr-create.out"
+work=$(mktemp -d "$tmp/work-XXXXXX")
+printf '%s\n' "$title" > "$work/title.txt"
+printf '%s\n' 'body text' > "$work/body.txt"
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" no "type: bug" "aspect: ui"
+expect_text "create/stdout is only the URL" "$tmp/data.out" "https://github.com/o/r/pull/9"
+expect_call "create/repository, assignee, title and body file" "$stub" "pr create --repo $repo_url --assignee @me --title $title --body-file $work/body.txt"
+expect_call "create/several labels" "$stub" "--label type: bug --label aspect: ui"
+expect_no_call "create/no draft flag for no" "$stub" "--draft"
+
+stub=$(new_stub)
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" yes "type: bug"
+expect_call "create/draft with one label" "$stub" "--body-file $work/body.txt --draft --label type: bug"
+stub=$(new_stub)
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" no
+expect_no_call "create/no label flag without labels" "$stub" "--label"
+
+stub=$(new_stub)
+fail_stub "$stub" pr-create 1 "error connecting to api.github.com"
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" no
+expect_error "create/gh fails" 13 network true
+jq -e '.message | startswith("Could not create the PR")' "$tmp/data.err" > /dev/null &&
+  report "create/failure message says create" ok ||
+  report "create/failure message says create" fail "$(cat "$tmp/data.err")"
+
+stub=$(new_stub)
+work=$(mktemp -d "$tmp/work-XXXXXX")
+printf '%s\n' 'body text' > "$work/body.txt"
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" no
+expect_error "create/title file missing" 1 other false
+printf '%s\n' '' > "$work/title.txt"
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" no
+expect_error "create/empty title" 1 other false
+work=$(mktemp -d "$tmp/work-XXXXXX")
+printf '%s\n' 'a title' > "$work/title.txt"
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" no
+expect_error "create/body file missing" 1 other false
+
+run_stub "$stub" "$create_script" create github.com "$repo_url" "$work" maybe
+expect_error "usage/create draft is not yes or no" 2 usage false
+run_stub "$stub" "$create_script" bogus
+expect_error "usage/pr-create unknown subcommand" 2 usage false
+
+# ---- skills: the failure rule for script calls is worded the same ----
+
+rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.'
+for skill in create-pr review-pr; do
+  if grep -qF -- "$rule" "$root/plugins/dotclaude-dev/skills/$skill/SKILL.md"; then
+    report "skills/$skill states the failure rule" ok
+  else
+    report "skills/$skill states the failure rule" fail "sentence not found"
+  fi
+done
 
 echo "$passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]

@@ -33,25 +33,15 @@ Output other than exactly `true` → stop.
 
 **Precondition 3 — Origin host**
 
-```bash
-git remote get-url origin 2>/dev/null
-```
-
-No output → stop:
-
-> "No `origin` remote configured in this repository."
-
-Store the output as `<origin-url>`. Only the host is needed before the auth check; it is cut out offline, for every remote URL form (`https://`, `git@host:`, `ssh://…:port/`, `user@` in the URL):
+Only the host is needed before the auth check. The script cuts it out of the URL of `origin` offline, for every remote URL form, and prints two lines: the URL and the host.
 
 ```bash
-printf '%s\n' '<origin-url>' | sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*##'
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" origin
 ```
 
-No output → stop:
+Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
 
-> "Cannot read a host from the `origin` URL `<origin-url>`."
-
-Store the output as `<host>`.
+Store the first printed line as `<origin-url>` and the second as `<host>`.
 
 **Precondition 4 — Confirm auth**
 
@@ -101,7 +91,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" pr <host> <repo-url> <pr-arg> <p
 
 `pr.json` keeps every fetched field and adds the base commit `baseRefOid` and the computed checks `sameRepo` and `isDeployment`, so later steps read them instead of judging the raw values. `headRefOid` and `baseRefOid` are the commits the review is based on. The body gets its own file, because the body parser reads text, not JSON.
 
-Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr. This holds for every `pr-data.sh` call in this skill. A stderr without such a line is shown as it is.
+Non-zero exit → stop, as described in Precondition 3.
 
 Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-dir>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-dir>/pr.json` when needed. The body is in `<pr-dir>/body.txt`.
 

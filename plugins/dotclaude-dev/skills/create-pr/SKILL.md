@@ -1,7 +1,7 @@
 ---
 name: create-pr
-description: Use when creating or updating a pull request — handles preconditions, label selection, PR body assembly, and update flow. Assumes branch is already committed and pushed.
-compatibility: Requires git, gh CLI with jq and internet access to GitHub
+description: Use when creating a pull request for the current branch, which is already committed and pushed.
+compatibility: Requires git, gh CLI, jq and internet access to GitHub
 ---
 
 # create-pr
@@ -17,7 +17,11 @@ git branch --show-current
 git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null
 ```
 
-Store the current branch name as `<branch>` — reuse in later steps, do not call `git branch --show-current` again.
+No output from the first command (detached HEAD) → stop:
+
+> "Not on a branch. Check out a branch, then re-run `/create-pr`."
+
+Store the output as `<branch>`.
 
 If no output from the second command → stop:
 
@@ -36,67 +40,79 @@ Non-zero exit → stop:
 > "Failed to fetch from `<remote>` — check your network connection then re-run `/create-pr`."
 
 ```bash
-git rev-list HEAD..@{u}
+git rev-list --left-right --count @{u}...HEAD
 ```
 
-If the output is non-empty → local is behind the remote → stop:
+The output is `<behind>` and `<ahead>`, separated by a tab. `<behind>` above 0 → stop:
 
 > "Local branch is behind `<remote>` — pull the latest changes (`git pull`) then re-run `/create-pr`."
 
-```bash
-git rev-list @{u}..HEAD
-```
+`<ahead>` above 0 → stop:
 
-If the output is non-empty → local is ahead of the remote (missing commits) → stop:
+> "Local branch has commits that are not on `<remote>` yet — push first (`git push`) then re-run `/create-pr`."
 
-> "Local branch has missing commits — push first (`git push`) then re-run `/create-pr`."
+**Precondition 3 — Remote URL and host**
 
-**Precondition 3 — Default-branch guard**
+The script cuts the host out of the remote URL offline and prints two lines: the URL and the host.
 
 ```bash
-DEFAULT=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" <remote>
 ```
 
-Store the default branch name as `<DEFAULT>` — reuse in later steps, do not call `gh repo view` again. Reuse `<branch>` from Precondition 1 — do not call `git branch --show-current` again.
+Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
 
-If `<branch>` == `<DEFAULT>` → stop:
+Store the first printed line as `<remote-url>` and the second as `<host>`.
+
+**Precondition 4 — Confirm auth**
+
+```bash
+gh api user --hostname <host> --jq '.login'
+```
+
+Non-zero exit → stop:
+
+> "Not authenticated with `<host>`. Run `gh auth login --hostname <host>` then re-run `/create-pr`."
+
+**Precondition 5 — Repository and default-branch guard**
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" repo <host> <remote-url>
+```
+
+Store the printed `url` as `<repo-url>`, `path` as `<repo-path>` and `defaultBranch` as `<default-branch>`.
+
+If `<branch>` == `<default-branch>` → stop:
 
 > "Branch `<branch>` is the default branch — create a feature branch first, then re-run `/create-pr`."
 
-**Precondition 4 — Detect GitHub host**
+**Precondition 6 — Temporary folder**
+
+What is collected for the PR is saved in a temporary folder, so later steps can read parts of it instead of carrying all of it in the conversation. Create the folder:
 
 ```bash
-git remote get-url <remote>
+d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp -d "$d/create-pr-XXXXXX"
 ```
 
-Parse the hostname:
+Non-zero exit → stop:
 
-- HTTPS: `https://github.example.com/org/repo.git` → `github.example.com`
-- SSH: `git@github.example.com:org/repo.git` → `github.example.com`
+> "Cannot create a temporary folder for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/create-pr`."
 
-Store as `<host>`.
+Store the printed path as `<pr-dir>`. Do not delete it.
 
-**Precondition 5 — Confirm auth and resolve assignee**
+The folder later holds `labels.json`, `issue-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
-```bash
-gh api user --jq '.login'
-```
-
-- Non-zero exit → stop:
-  > "Not authenticated with `<host>`. Run `gh auth login --hostname <host>` then re-run `/create-pr`."
-- Success → store the returned login as `<username>` and display:
-  > "Authenticated with `<host>`. Assignee of new PR will be: `<username>`"
-
-Continue without asking for confirmation.
+Every stored value is reused in later steps; never re-run a command whose result is stored.
 
 ## Mode Detection
 
 ```bash
-gh pr list --head <branch> --state open --json number,title
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" open-pr <host> <repo-url> <branch>
 ```
 
-- Open PR found → **update mode is the only path**. (not yet implemented — stop with: "Update mode is not yet implemented.")
-- No open PR found → proceed to create flow.
+The script prints the open PRs of `<branch>` as a JSON array.
+
+- Array not empty → **update mode is the only path**. (not yet implemented — stop with: "Update mode is not yet implemented.")
+- Array empty → proceed to create flow.
 
 ## Create Flow
 
@@ -105,14 +121,14 @@ Run these steps in this exact order. Inference in Steps 4–7 (labels, file risk
 ### Step 1 — Gather branch context
 
 ```bash
-git log <remote>/<DEFAULT>..HEAD
-git diff <remote>/<DEFAULT>...HEAD --name-only
-git diff <remote>/<DEFAULT>...HEAD
+git log <remote>/<default-branch>..HEAD
+git diff <remote>/<default-branch>...HEAD --name-only
+git diff <remote>/<default-branch>...HEAD
 ```
 
-Use `<remote>/<DEFAULT>` (not local `<DEFAULT>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<DEFAULT>`); `git diff` uses three dots (diff against the merge-base) so upstream changes on `<DEFAULT>` since the branch was cut don't show up as noise.
+Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); `git diff` uses three dots (diff against the merge-base) so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
 
-Read `<branch>` (from Precondition 1), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context — do not re-run these commands per step.
+Read `<branch>` (from Precondition 1), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
 
 **Checklist table lookup.** In addition to the git commands above, read exactly one file — the target repo's own root `CLAUDE.md` (same repo root the git commands above already operate in, found via `git rev-parse --show-toplevel` or equivalent):
 
@@ -133,7 +149,7 @@ Read only this path. Do not search, glob, or read any other `CLAUDE.md` — not 
 2. Run one command per row, passing every cleaned pattern from that row as a separate `:(glob)` pathspec:
 
    ```bash
-   git diff <remote>/<DEFAULT>...HEAD --name-only -- ':(glob)<pattern-1>' ':(glob)<pattern-2>' ...
+   git diff <remote>/<default-branch>...HEAD --name-only -- ':(glob)<pattern-1>' ':(glob)<pattern-2>' ...
    ```
 
    Non-empty stdout → the row matches. Empty stdout → no match. Do not use the exit code — this command always exits `0` regardless of whether anything matched.
@@ -144,21 +160,22 @@ Store the result as `<pr-checklist>`, in table row order, with exact-duplicate i
 
 ### Step 2 — Issue linking
 
-Ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Remark: Issues have to exist in THIS repository."
+Ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Issues must be in this repository."
 
-For each number provided:
+For each number provided, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
 
 ```bash
-gh issue view <N> --json title,body,labels
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <N> <pr-dir>
 ```
 
-- Not found → use the AskUserQuestion tool to warn and ask the author to correct or drop it. Not a hard block.
-- Already closed → use the AskUserQuestion tool to warn ("Issue #N is already closed — still include?") with options "Include anyway" / "Drop it". Not a hard block.
-- Found → fetch title + full issue body + labels.
+- Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
+- Any other non-zero exit → stop, as described in Precondition 3.
+- State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" / "Drop it". Not a hard block.
+- State `OPEN` → keep it.
 
 If `N/A`, skip the confirmation below and continue with `<closes>` and `<issue-context>` empty.
 
-Otherwise, use the AskUserQuestion tool to show a confirmation listing each issue number with its fetched title:
+Otherwise, ask with `AskUserQuestion` to show a confirmation listing each issue number with its fetched title:
 
 - Question: "Confirm linked issues:"
 - Options:
@@ -167,11 +184,11 @@ Otherwise, use the AskUserQuestion tool to show a confirmation listing each issu
 
 Format as individual `Closes #N` lines.
 
-Store the result as `<closes>` and the fetched issue summaries (including each issue's full body and labels) as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1 — do not re-fetch issues per step. Step 7 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
+Store the result as `<closes>`. Read the file `<pr-dir>/issue-<N>.json` of every kept issue once and keep its title, full body and labels as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1. Step 7 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
 
 ### Step 3 — CodeQL alert linking
 
-Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert number(s) this PR fixes? (comma-separated, e.g. 3, 5 — or N/A) Remark: Alerts have to exist in THIS repository."
+Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert number(s) this PR fixes? (comma-separated, e.g. 3, 5 — or N/A) Alerts must be in this repository."
 
 For each number provided:
 
@@ -179,13 +196,13 @@ For each number provided:
 gh api repos/{owner}/{repo}/code-scanning/alerts/<N>
 ```
 
-- Not found → use the AskUserQuestion tool to warn and ask the author to correct or drop it. Not a hard block.
-- `state` is `fixed` or `dismissed` → use the AskUserQuestion tool to warn ("Alert #N is already <state> — still include?") with options "Include anyway" / "Drop it". Not a hard block.
+- Not found → ask with `AskUserQuestion` to warn and ask the author to correct or drop it. Not a hard block.
+- `state` is `fixed` or `dismissed` → ask with `AskUserQuestion` to warn ("Alert #N is already <state> — still include?") with options "Include anyway" / "Drop it". Not a hard block.
 - Found and open → fetch `rule.id`, `rule.description`, `rule.security_severity_level`, `most_recent_instance.message.text`, `most_recent_instance.location.path`.
 
 If `N/A`, skip the confirmation below and continue with `<codeql-context>` empty.
 
-Otherwise, use the AskUserQuestion tool to show a confirmation listing each alert number with its fetched `rule.id`:
+Otherwise, ask with `AskUserQuestion` to show a confirmation listing each alert number with its fetched `rule.id`:
 
 - Question: "Confirm linked CodeQL alerts:"
 - Options:
@@ -194,7 +211,7 @@ Otherwise, use the AskUserQuestion tool to show a confirmation listing each aler
 
 There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing branch/PR to an alert automatically once a scan of that branch clears the alert's fingerprint; this is not settable via `gh api`/`gh pr create`, so `create-pr` does not attempt it and adds no PR body section for alerts.
 
-**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `html_url` and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then use the AskUserQuestion tool:
+**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `html_url` and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then ask with `AskUserQuestion`:
 
 - Question: "Assign yourself to each linked alert and link this branch under its Development section (both in the GitHub UI), then continue."
 - Options:
@@ -202,24 +219,20 @@ There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing bran
 
 This is not verified — `create-pr` has no way to check either action happened — it is an explicit acknowledgment gate, not a hard block on unconfirmed state.
 
-Store the fetched alert summaries as `<codeql-context>`. Subsequent steps (file risk, label inference, PR title, body) use `<codeql-context>` as additional signal alongside `<issue-context>` and the branch context from Step 1 — do not re-fetch alerts per step. `<codeql-context>` is commonly empty; this is not itself a warning.
+Store the fetched alert summaries as `<codeql-context>`. Subsequent steps (file risk, label inference, PR title, body) use `<codeql-context>` as additional signal alongside `<issue-context>` and the branch context from Step 1. `<codeql-context>` is commonly empty; this is not itself a warning.
 
 ### Step 4 — Label selection
 
 ```bash
-gh label list --json name,description --limit 50
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <host> <repo-url> <pr-dir>
 ```
 
-Store the fetched labels (name + description) — reuse in Step 5 (file risk) and later in this step; do not re-fetch.
+The script writes all labels to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each label. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
 
-**Taxonomy detection:** Filter to labels with `type:` or `aspect:` prefixes via `jq`, applied to the already-fetched list from the command above (do not re-run `gh label list`):
+**Taxonomy detection** is done by the script:
 
-```bash
-jq '[.[] | select(.name | startswith("type:") or startswith("aspect:"))]'
-```
-
-- If matching labels exist → use only those. Suppress all other labels (`priority:`, `status:`, community labels).
-- If no `type:`/`aspect:` labels exist (empty `jq` result) → **fallback mode**: use all repo labels unfiltered (the full list from the original fetch). Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
+- `mode` is `taxonomy` → the printed labels are the ones with `type:` or `aspect:` prefix; use only those. Suppress all other labels (`priority:`, `status:`, community labels).
+- `mode` is `fallback` → no `type:`/`aspect:` labels exist; the printed labels are all repo labels. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
 
 **Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
 
@@ -229,10 +242,10 @@ If no `type:` label could be inferred, leave the slot empty rather than blocking
 
 #### Verification
 
-Whenever a label is set or changed (initial inference, or a correction made in the Step 7 loop), verify the label name against the fetched label list via `jq`, not by eyeballing the array — apply this to the label list already stored from the fetch above, no re-fetch:
+Whenever a label is set or changed (initial inference, or a correction made in the Step 7 loop), verify the label name against `<pr-dir>/labels.json` via `jq`, not by eyeballing the array:
 
 ```bash
-jq --arg name "<label-name>" 'any(.[]; .name == $name)'
+jq --arg name "<label-name>" 'any(.[]; .name == $name)' <pr-dir>/labels.json
 ```
 
 `true` → the name matches an existing label, proceed. `false` → warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
@@ -287,13 +300,13 @@ Build a draft with one subsection per risk level, in order Critical → Medium �
 - `<path>` — <short summary of the change>
 ```
 
-The heading text (`## File risk`, `### 🔴 Critical`, `### 🟡 Medium`, `### 🟢 Low`), the fact that all three subsections always appear (with no bullets when a bucket is empty), and the `` `<path>` — <summary> `` bullet format are a stable contract other skills parse from the PR body — do not reword or reformat them.
+The format is the contract in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`: change it there first, and do not reword or reformat the headings or bullets here.
 
 Store the derived sections as `<file-risk>`.
 
 ### Step 6 — PR title
 
-Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3 — do not re-run `git branch`/`git log`/`git diff`.
+Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3.
 
 Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
 
@@ -305,14 +318,14 @@ Store the derived title as `<title>`.
 
 ### Step 7 — PR description (body)
 
-Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3 — do not re-run `git log`/`git diff`:
+Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3:
 
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
 - **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `rule.description`/`most_recent_instance.message.text` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one. Start at the motivation itself — no intro sentence, no restating the title or What — and keep it to 1–5 sentences.
 
 Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, decide this explicitly rather than defaulting. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is a justification that leads with the irreversible thing and names a concrete change from the diff (e.g. "Drops column `users.legacy_id` in `db/migrations/0042_drop_users_legacy_id.sql`; reverting the PR won't restore the data."). "Risky" alone is not a justification.
 
-Assemble `<body>` as a `## What` section with the derived What text, followed by a `## Why` section with the derived Why text, followed by `<file-risk>` from Step 5, followed by a `## Merge danger` section built from `<merge-danger>` (omitted if `<merge-danger>` is empty), followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
+Assemble `<body>` as defined in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`: a `## What` section with the derived What text, followed by a `## Why` section with the derived Why text, followed by `<file-risk>` from Step 5, followed by a `## Merge danger` section built from `<merge-danger>` (omitted if `<merge-danger>` is empty), followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
 
 ```markdown
 ## PR checklist
@@ -329,7 +342,7 @@ Default `<draft-state>` to "ready for review".
 
 Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If Step 1 found a `### PR merge checklist` heading but couldn't use it (no table, or a table missing a required column), also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
-Use the AskUserQuestion tool to ask:
+Ask with `AskUserQuestion`:
 
 - Question: "Does this PR look right?"
 - Options:
@@ -341,17 +354,20 @@ Loop has no fixed iteration cap — repeat until the author chooses "Looks good,
 
 ### Step 8 — Create PR
 
+Write `<title>` as plain text to `<pr-dir>/title.txt` and `<body>` to `<pr-dir>/body.txt` with the Write tool, exactly as shown in the preview. Never put title or body into a shell command: both contain backticks, which the shell would run.
+
+Check that the body can be read by the other skills:
+
 ```bash
-gh pr create \
-  --assignee @me \
-  [--label "<label1>" --label "<label2>" ... for each label in <selected-labels>, omit entirely if empty] \
-  [--draft if <draft-state> is "Draft"] \
-  --title "<title>" \
-  --body-file - <<'EOF'
-<body>
-EOF
+jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-dir>/body.txt
 ```
 
-Pass `<body>` through the quoted heredoc (`<<'EOF'`), never inside a double-quoted `--body` argument — the body contains backticks, which the shell would otherwise run as command substitutions. If `<body>` itself contains a line that is exactly `EOF`, use a different delimiter.
+Expected: `fileRisk.state` is `ok` and `closes.numbers` equals the issue numbers in `<closes>`. Anything else means the body drifted from the contract: show the difference in the preview, go back to the loop above, and run no `gh pr create`.
 
-Display the PR URL returned by the command.
+Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no` otherwise, followed by one argument per label in `<selected-labels>` (none if empty). The script reads both files and prints the PR URL:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <host> <repo-url> <pr-dir> <yes|no> ["<label>" ...]
+```
+
+Display the PR URL.
