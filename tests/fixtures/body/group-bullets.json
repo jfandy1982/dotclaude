@@ -1,0 +1,17 @@
+{
+  "fileRisk": {
+    "state": "ok",
+    "Critical": [],
+    "Medium": [],
+    "Low": [
+      "`src/app/foo/foo.component.{ts,spec.ts,scss,html}` — new Foo component (4 files)",
+      "`tests/fixtures/foo/` — fixtures for the Foo tests (9 files)",
+      "`README.md` — documents the Foo view"
+    ]
+  },
+  "mergeDanger": null,
+  "closes": {
+    "state": "missing",
+    "numbers": []
+  }
+}

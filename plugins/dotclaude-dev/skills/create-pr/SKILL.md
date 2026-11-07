@@ -252,7 +252,7 @@ Store the final label set as `<selected-labels>`.
 
 ### Step 5 — File risk
 
-Using the `<file-table>` paths from Step 1, `<issue-context>` from Step 2, `<codeql-context>` from Step 3, and the label descriptions fetched in Step 4, classify each file.
+Using the `<file-table>` paths from Step 1, `<issue-context>` from Step 2, `<codeql-context>` from Step 3, and the label descriptions fetched in Step 4, classify each file, then group files that belong together (see Grouping).
 
 | Risk | File characteristics |
 | --- | --- |
@@ -270,13 +270,21 @@ A file flagged by a linked CodeQL alert (`<codeql-context>` from Step 3, matched
 
 When in doubt, classify up rather than down.
 
+#### Grouping
+
+Files that change together for one reason and share a risk level become one bullet, so real risk is not buried in a long list. Decide per PR from everything gathered above (diff, intent, issue, CodeQL alert, labels). Keep a group inside one directory or one set of siblings (same directory, same base name before the first dot); a file with a different risk than its group leaves it and gets its own bullet, and a Critical file or one raised by an open CodeQL alert is never grouped. Examples, not a complete list:
+
+- the `.ts`, `.spec.ts`, `.scss` and `.html` of one new component → one group, named as the component
+- a script, its tests and its fixtures → one group per kind
+- a folder of test fixtures → the directory as one entry
+
 #### Ranking
 
-Within a subsection, two files can share the same bucket but not the same severity — e.g. `db/migrations/0042_drop_users_legacy_id.sql` and `src/users/user.service.ts` can both be Critical, but the migration mutates persisted data and is hard to roll back, while the service change is contained and easy to revert with a follow-up PR. Order files within each subsection by that severity (irreversibility and blast radius first), falling back to alphabetical by path only when two files are genuinely comparable in severity.
+Within a subsection, two files can share the same bucket but not the same severity — e.g. `db/migrations/0042_drop_users_legacy_id.sql` and `src/users/user.service.ts` can both be Critical, but the migration mutates persisted data and is hard to roll back, while the service change is contained and easy to revert with a follow-up PR. Order entries within each subsection by that severity (irreversibility and blast radius first), falling back to alphabetical by path only when two files are genuinely comparable in severity.
 
 #### Format
 
-Build a draft with one subsection per risk level, in order Critical → Medium → Low. All three subsections are always present, even when a risk level has no files — keep the heading and leave the file list empty, no placeholder bullet (one blank line before the next heading, same spacing as a populated subsection). Each file gets a one-line annotation (≤10 words) summarizing what changed in that file, derived from the diff gathered in Step 1 (for a generated file or a pure rename: from its numbers, `renamedFrom` and the other changed files):
+Build a draft with one subsection per risk level, in order Critical → Medium → Low. All three subsections are always present, even when a risk level has no files — keep the heading and leave the file list empty, no placeholder bullet (one blank line before the next heading, same spacing as a populated subsection). Each entry (a file or a group) gets a one-line annotation (up to 10 words, not counting a group's file count) summarizing what changed, derived from the diff gathered in Step 1 (for a generated file or a pure rename: from its numbers, `renamedFrom` and the other changed files):
 
 ```markdown
 ## File risk
@@ -291,6 +299,7 @@ Build a draft with one subsection per risk level, in order Critical → Medium �
 ### 🟢 Low
 
 - `<path>` — <short summary of the change>
+- `<directory or brace pattern>` — <what the group is> (<N> files)
 ```
 
 The format is the contract in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`: change it there first, and do not reword or reformat the headings or bullets here.
