@@ -99,7 +99,7 @@ Non-zero exit → stop:
 
 Store the printed path as `<pr-dir>`. Do not delete it.
 
-The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
+The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
 Every stored value is reused in later steps; never re-run a command whose result is stored.
 
@@ -154,7 +154,7 @@ The script's answer is final: do not read `CLAUDE.md` or match patterns yourself
 
 Ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Issues must be in this repository."
 
-For each number provided, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
+Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <N> <pr-dir>
@@ -162,7 +162,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <N> <pr-
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
 - Any other non-zero exit → stop, as described in Precondition 3.
-- State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" / "Drop it". Not a hard block.
+- State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `OPEN` → keep it.
 
 If `N/A`, skip the confirmation below and continue with `<closes>` and `<issue-context>` empty.
@@ -172,7 +172,7 @@ Otherwise, ask with `AskUserQuestion` to show a confirmation listing each issue 
 - Question: "Confirm linked issues:"
 - Options:
   - "Use these issues" (Recommended) — preview: each issue number with its fetched title
-  - "Edit" — author revises the issue number list via a follow-up plain text prompt
+  - "Edit" — author revises the issue number list via a follow-up plain text prompt; run the command for each new number and apply the checks above
 
 Format as individual `Closes #N` lines.
 
@@ -182,36 +182,37 @@ Store the result as `<closes>`. Read the file `<pr-dir>/issue-<N>.json` of every
 
 Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert number(s) this PR fixes? (comma-separated, e.g. 3, 5 — or N/A) Alerts must be in this repository."
 
-For each number provided:
+Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `alert-<N>.json` into `<pr-dir>` and prints one line, `#<N> <ruleId> (<state>)`:
 
 ```bash
-gh api repos/{owner}/{repo}/code-scanning/alerts/<N>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <host> <repo-path> <N> <pr-dir>
 ```
 
-- Not found → ask with `AskUserQuestion` to warn and ask the author to correct or drop it. Not a hard block.
-- `state` is `fixed` or `dismissed` → ask with `AskUserQuestion` to warn ("Alert #N is already <state> — still include?") with options "Include anyway" / "Drop it". Not a hard block.
-- Found and open → fetch `rule.id`, `rule.description`, `rule.security_severity_level`, `most_recent_instance.message.text`, `most_recent_instance.location.path`.
+- Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
+- Any other non-zero exit → stop, as described in Precondition 3.
+- State other than `open` (`fixed`, `dismissed`) → ask with `AskUserQuestion` ("Alert #N is already <state> — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
+- State `open` → keep it.
 
 If `N/A`, skip the confirmation below and continue with `<codeql-context>` empty.
 
-Otherwise, ask with `AskUserQuestion` to show a confirmation listing each alert number with its fetched `rule.id`:
+Otherwise, ask with `AskUserQuestion` to show a confirmation listing each alert number with its `ruleId`:
 
 - Question: "Confirm linked CodeQL alerts:"
 - Options:
-  - "Use these alerts" (Recommended) — preview: each alert number with its fetched `rule.id`
-  - "Edit" — author revises the alert number list via a follow-up plain text prompt
+  - "Use these alerts" (Recommended) — preview: each alert number with its `ruleId`
+  - "Edit" — author revises the alert number list via a follow-up plain text prompt; run the command for each new number and apply the checks above
+
+Read the file `<pr-dir>/alert-<N>.json` of every kept alert once and keep its `state`, `url`, `ruleId`, `ruleDescription`, `severity`, `message` and `path` as `<codeql-context>`. Subsequent steps (file risk, label inference, PR title, body) use `<codeql-context>` as additional signal alongside `<issue-context>` and the branch context from Step 1. `<codeql-context>` is commonly empty; this is not itself a warning.
 
 There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing branch/PR to an alert automatically once a scan of that branch clears the alert's fingerprint; this is not settable via `gh api`/`gh pr create`, so `create-pr` does not attempt it and adds no PR body section for alerts.
 
-**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `html_url` and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then ask with `AskUserQuestion`:
+**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `url` (from `<codeql-context>`) and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then ask with `AskUserQuestion`:
 
 - Question: "Assign yourself to each linked alert and link this branch under its Development section (both in the GitHub UI), then continue."
 - Options:
   - "Done, continue" — the only option; proceed to Step 4
 
 This is not verified — `create-pr` has no way to check either action happened — it is an explicit acknowledgment gate, not a hard block on unconfirmed state.
-
-Store the fetched alert summaries as `<codeql-context>`. Subsequent steps (file risk, label inference, PR title, body) use `<codeql-context>` as additional signal alongside `<issue-context>` and the branch context from Step 1. `<codeql-context>` is commonly empty; this is not itself a warning.
 
 ### Step 4 — Label selection
 
@@ -265,7 +266,7 @@ Also weigh each file against the PR's overall intent, not just its own diff in i
 
 Use the fetched label descriptions (Step 4) as an additional signal for which areas/topics matter in this repo — e.g. a label described as covering authentication or data access raises attention on `src/users/user.service.ts`; a label described as CI or infrastructure raises attention on `.github/workflows/ci.yml`. Only apply this when a label's description clearly maps to the changed files — don't force a connection that isn't there.
 
-A file flagged by a linked CodeQL alert (`<codeql-context>` from Step 3, matched by the alert's `most_recent_instance.location.path`) is raised at least to the risk level implied by the alert's `rule.security_severity_level` — don't let the file's own name-based default (e.g. `src/users/user.service.ts`, normally Medium) undersell a file with an open security finding on it.
+A file flagged by a linked CodeQL alert (`<codeql-context>` from Step 3, matched by the alert's `path`) is raised at least to the risk level for the alert's `severity`: `critical` or `high` → Critical, `medium` → Medium, `low` → Low. This only raises a file, it never lowers one, and `null` means no severity: no raise. Only an alert with state `open` raises a file; a `fixed` or `dismissed` alert the author chose to include is context only. Don't let the file's own name-based default (e.g. `src/users/user.service.ts`, normally Medium) undersell a file with an open security finding on it.
 
 When in doubt, classify up rather than down.
 
@@ -313,7 +314,7 @@ Store the derived title as `<title>`.
 Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3:
 
 - **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
-- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `rule.description`/`most_recent_instance.message.text` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one. Start at the motivation itself — no intro sentence, no restating the title or What — and keep it to 1–5 sentences.
+- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `ruleDescription`/`message` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one. Start at the motivation itself — no intro sentence, no restating the title or What — and keep it to 1–5 sentences.
 
 Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, decide this explicitly rather than defaulting. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is a justification that leads with the irreversible thing and names a concrete change from the diff (e.g. "Drops column `users.legacy_id` in `db/migrations/0042_drop_users_legacy_id.sql`; reverting the PR won't restore the data."). "Risky" alone is not a justification.
 

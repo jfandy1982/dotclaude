@@ -1,0 +1,10 @@
+{
+  "number": 3,
+  "state": "open",
+  "url": "https://github.example.local/o/r/security/code-scanning/3",
+  "ruleId": "js/sql-injection",
+  "ruleDescription": "Database query built from user-controlled sources",
+  "severity": "high",
+  "message": "This query depends on a user-provided value.",
+  "path": "src/users/user.service.ts"
+}

@@ -5,6 +5,9 @@
 #       writes <pr-dir>/pr.json and <pr-dir>/body.txt, prints pr.json without the bulky fields
 #   pr-data.sh issue <host> <repo-url> <issue-number> <pr-dir>
 #       writes <pr-dir>/issue-<issue-number>.json, prints "#<number> <title> (<STATE>)"
+#   pr-data.sh alert <host> <repo-path> <alert-number> <pr-dir>
+#       one code scanning alert, reduced to {number, state, url, ruleId, ruleDescription, severity, message, path}
+#       (missing parts null), written to <pr-dir>/alert-<alert-number>.json, prints "#<number> <ruleId> (<state>)"
 #   pr-data.sh ci <pr-dir>
 #       reads <pr-dir>/pr.json, prints {passed, failed, pending}
 #   pr-data.sh feedback <host> <repo-path> <pr-number> <pr-dir>
@@ -15,7 +18,7 @@
 set -u -o pipefail
 
 SCRIPT="pr-data.sh"
-SUBCOMMANDS='pr|issue|ci|feedback'
+SUBCOMMANDS='pr|issue|alert|ci|feedback'
 # shellcheck source=gh-contract.sh
 source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
 
@@ -60,6 +63,22 @@ cmd_issue() {
   return $?
 }
 
+cmd_alert() {
+  local host=$1 repo_path=$2 number=$3 dir=$4 result
+  HOST=$host
+  [[ $number =~ ^[0-9]+$ ]] || usage
+  run_gh "alert #$number" api --hostname "$host" "repos/$repo_path/code-scanning/alerts/$number"
+  # -e with select: anything that is not an alert object with a numeric number gives no output, so the die below fires
+  result=$(printf '%s' "$OUT" | jq -e 'select(type == "object" and (.number | type) == "number") | {
+    number, state, url: .html_url,
+    ruleId: .rule.id, ruleDescription: .rule.description, severity: .rule.security_severity_level,
+    message: .most_recent_instance.message.text, path: .most_recent_instance.location.path}' 2> /dev/null) ||
+    die "alert #$number" "Cannot read the alert returned by gh."
+  write_file "$dir" "alert-$number.json" "$result"
+  printf '%s' "$result" | jq -r '"#\(.number) \(.ruleId) (\(.state))"'
+  return $?
+}
+
 cmd_ci() {
   local dir=$1
   require_pr_json "$dir" "CI status"
@@ -100,6 +119,7 @@ main() {
   case $cmd in
     pr) [[ $# -eq 4 ]] || usage; cmd_pr "$@" ;;
     issue) [[ $# -eq 4 ]] || usage; cmd_issue "$@" ;;
+    alert) [[ $# -eq 4 ]] || usage; cmd_alert "$@" ;;
     ci) [[ $# -eq 1 ]] || usage; cmd_ci "$@" ;;
     feedback) [[ $# -eq 4 ]] || usage; cmd_feedback "$@" ;;
     *) usage ;;

@@ -1,6 +1,6 @@
 {
   "number": 7,
-  "url": "https://github.com/o/r/pull/7",
+  "url": "https://github.example.local/o/r/pull/7",
   "title": "feat: sample",
   "body": "## File risk\n\n### 🟢 Low\n\n- `a.md` — x\n",
   "labels": [{ "name": "type: enhancement" }],
