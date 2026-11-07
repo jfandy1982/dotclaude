@@ -16,12 +16,16 @@ SUBCOMMANDS='files|file'
 source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
 
 RANGE=""
+# the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file; removed on exit with the contract's own scratch file
+LISTING=$(mktemp "${TMPDIR:-/tmp}/dotclaude-list-XXXXXX") || exit 1
+trap 'rm -f "$ERR_FILE" "$LISTING"' EXIT
 # Lockfiles that are generated unless .gitattributes says otherwise; other lockfiles: mark them linguist-generated in the repository
 LOCKFILES="package-lock.json yarn.lock pnpm-lock.yaml"
 
 # set_range <remote> <default-branch>: sets RANGE to the three-dot range, dies when the remote-tracking branch does not exist
 set_range() {
   local remote=$1 base=$2
+  run_git "repository" rev-parse --git-dir > /dev/null
   git rev-parse --verify --quiet "refs/remotes/$remote/$base^{commit}" > /dev/null 2>&1 ||
     die "$remote/$base" "No remote-tracking branch $remote/$base in this repository."
   RANGE="$remote/$base...HEAD"
@@ -34,7 +38,7 @@ set_range() {
 # shortcut: one file's diff is read whole, so a huge unmarked file (minified bundle) can hit the tool output limit; mark it linguist-generated in .gitattributes
 file_diff() {
   local path=$1 old=${2:-$1} out
-  out=$(git diff --no-color --no-ext-diff --no-textconv -M "$RANGE" -- ":(top,literal)$old" ":(top,literal)$path") || die "diff of $path" "git could not diff $path."
+  out=$(run_git "diff of $path" diff --no-color --no-ext-diff --no-textconv -M "$RANGE" -- ":(top,literal)$old" ":(top,literal)$path") || exit $?
   [[ -z $out ]] || printf '%s\n' "$out"
   return 0
 }
@@ -42,7 +46,7 @@ file_diff() {
 # is_generated <top> <path>: prints yes or no. The attribute linguist-generated decides; without it, the file name is checked against LOCKFILES
 is_generated() {
   local top=$1 path=$2 line value lock
-  line=$(git -C "$top" check-attr linguist-generated -- "$path") || die "attributes of $path" "git could not read the attributes of $path."
+  line=$(run_git "attributes of $path" -C "$top" check-attr linguist-generated -- "$path") || exit $?
   value=${line##*: }
   case $value in
     unset | false) echo no ;;
@@ -57,14 +61,14 @@ is_generated() {
   return 0
 }
 
+# shortcut: several processes per file (about 15 ms, 1000 files took about 15 s), fine up to a few hundred; batch check-attr and jq beyond that
 cmd_files() {
-  local remote=$1 base=$2 dir=$3 listing=$ERR_FILE tok rest added removed path old number=0 name content entries="" top generated diff_path entry
+  local remote=$1 base=$2 dir=$3 tok rest added removed path old number=0 name content entries="" top generated diff_path entry
   [[ -d $dir ]] || die "diff folder" "Folder $dir does not exist."
   set_range "$remote" "$base"
   mkdir -p "$dir/diff" || die "diff folder" "Cannot create $dir/diff."
-  top=$(git rev-parse --show-toplevel) || die "repository" "Not inside a git repository."
-  # the file list holds NUL bytes, which a shell variable cannot: ERR_FILE is unused here (no gh call) and removed on exit
-  git diff "$RANGE" --numstat -z -M > "$listing" || die "diff of $RANGE" "git could not list the changed files."
+  top=$(run_git "repository root" rev-parse --show-toplevel) || exit $?
+  run_git "changed files of $RANGE" diff "$RANGE" --numstat -z -M > "$LISTING"
   while IFS= read -r -d '' tok; do
     added=${tok%%$'\t'*}
     rest=${tok#*$'\t'}
@@ -92,7 +96,7 @@ cmd_files() {
        removed: (if $removed == "-" then null else ($removed | tonumber) end),
        generated: ($generated == "yes"), diff: (if $diff == "" then null else $diff end)}') || die "table entry of $path" "Cannot build the table entry."
     entries+=$entry$'\n'
-  done < "$listing"
+  done < "$LISTING"
   printf '%s' "$entries" | jq -sc '.'
   return 0
 }
