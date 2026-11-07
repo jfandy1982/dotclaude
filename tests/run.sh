@@ -465,6 +465,266 @@ expect_error "usage/create draft is not yes or no" 2 usage false
 run_stub "$stub" "$create_script" bogus
 expect_error "usage/pr-create unknown subcommand" 2 usage false
 
+# ---- branch-diff.sh ----
+# Each case builds a small scratch repository; origin/main is a plain ref, no real remote is involved.
+
+diff_script="$root/plugins/dotclaude-dev/scripts/branch-diff.sh"
+
+# make_branch_repo <dir>: a repository with one commit on main, refs/remotes/origin/main at that commit, HEAD on branch feature
+make_branch_repo() {
+  local dir=$1
+  git init -q "$dir"
+  git -C "$dir" symbolic-ref HEAD refs/heads/main
+  git -C "$dir" config user.name tester
+  git -C "$dir" config user.email tester@example.com
+  printf 'one\n' > "$dir/base.txt"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+  git -C "$dir" update-ref refs/remotes/origin/main HEAD
+  git -C "$dir" checkout -q -b feature
+  return 0
+}
+
+# commit_all <dir>
+commit_all() {
+  local dir=$1
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m change
+  return 0
+}
+
+# expect_jq <name> <jq-filter> [jq-options...]: the last run succeeded and the filter is true on its stdout
+expect_jq() {
+  local name=$1 filter=$2
+  shift 2
+  if [[ $DATA_CODE -eq 0 ]] && jq -e "$@" "$filter" "$tmp/data.out" > /dev/null 2>&1; then
+    report "$name" ok
+  else
+    report "$name" fail "exit $DATA_CODE; stdout: $(cat "$tmp/data.out"); stderr: $(cat "$tmp/data.err")"
+  fi
+  return 0
+}
+
+# expect_in_file <name> <file> <text>: the file contains the text (fixed string)
+expect_in_file() {
+  local name=$1 file=$2 text=$3
+  if grep -qF -- "$text" "$file" 2> /dev/null; then
+    report "$name" ok
+  else
+    report "$name" fail "not found: $text in $file"
+  fi
+  return 0
+}
+
+bd_repo=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_repo"
+mkdir -p "$bd_repo/src"
+printf 'a1\na2\n' > "$bd_repo/src/a.txt"
+printf 'one\ntwo\n' > "$bd_repo/base.txt"
+commit_all "$bd_repo"
+
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/files: hand-written files, numbers and diff files" \
+  '. == [{path: "base.txt", renamedFrom: null, added: 1, removed: 0, generated: false, diff: ($d + "/diff/001.diff")},
+         {path: "src/a.txt", renamedFrom: null, added: 2, removed: 0, generated: false, diff: ($d + "/diff/002.diff")}]' --arg d "$bd_dir"
+expect_in_file "branch-diff/files: diff file holds the change" "$bd_dir/diff/001.diff" "+two"
+
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_repo/src" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/files: from a subdirectory of the repository" \
+  '[.[] | {path, added, removed}] == [{path: "base.txt", added: 1, removed: 0}, {path: "src/a.txt", added: 2, removed: 0}]'
+expect_in_file "branch-diff/files: subdirectory run writes the diff" "$bd_dir/diff/002.diff" "+a2"
+
+bd_odd=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_odd"
+for name in "a b.txt" 'q"d.txt' "-dash.txt" $'n\nl.txt'; do
+  printf 'x\n' > "$bd_odd/$name"
+done
+commit_all "$bd_odd"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_odd" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/files: awkward file names arrive unchanged" \
+  '([.[].path] | sort) == ["-dash.txt", "a b.txt", "n\nl.txt", "q\"d.txt"] and all(.[]; .diff != null and .added == 1)'
+count=$(ls "$bd_dir/diff" | wc -l | tr -d ' ')
+if [[ $count -eq 4 ]]; then report "branch-diff/files: awkward names each get a diff file" ok; else report "branch-diff/files: awkward names each get a diff file" fail "$count files"; fi
+
+bd_none=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_none"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_none" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/files: no change prints an empty table" '. == []'
+expect_empty "branch-diff/files: no change writes no diff file" "$bd_dir/diff"
+
+bd_bin=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_bin"
+printf 'a\0b\n' > "$bd_bin/pic.dat"
+commit_all "$bd_bin"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_bin" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/files: binary file has null counts and a diff file" \
+  '. == [{path: "pic.dat", renamedFrom: null, added: null, removed: null, generated: false, diff: ($d + "/diff/001.diff")}]' --arg d "$bd_dir"
+expect_in_file "branch-diff/files: binary diff file says so" "$bd_dir/diff/001.diff" "Binary files"
+
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" file origin main base.txt
+expect_in_file "branch-diff/file: prints the diff of one path" "$tmp/data.out" "+two"
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" file origin main nothing.txt
+if [[ $DATA_CODE -eq 0 && ! -s "$tmp/data.out" ]]; then report "branch-diff/file: a path without change prints nothing" ok; else report "branch-diff/file: a path without change prints nothing" fail "exit $DATA_CODE: $(cat "$tmp/data.out")"; fi
+
+bd_glob=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_glob"
+printf 'x\n' > "$bd_glob/*.txt"
+printf 'y\n' > "$bd_glob/other.txt"
+commit_all "$bd_glob"
+PLAIN_DIR="$bd_glob" run_plain "$diff_script" file origin main '*.txt'
+expect_in_file "branch-diff/file: a glob character matches only itself" "$tmp/data.out" "+x"
+if grep -qF "other.txt" "$tmp/data.out"; then report "branch-diff/file: glob does not match other files" fail "other.txt in output"; else report "branch-diff/file: glob does not match other files" ok; fi
+
+# generated files: numbers only, no diff file, no number consumed
+bd_gen=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_gen"
+mkdir -p "$bd_gen/apps/web" "$bd_gen/src"
+printf '{}\n' > "$bd_gen/package-lock.json"
+printf 'lock\n' > "$bd_gen/apps/web/yarn.lock"
+printf 'lock\n' > "$bd_gen/pnpm-lock.yaml"
+printf 'x\n' > "$bd_gen/src/x.txt"
+commit_all "$bd_gen"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_gen" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/generated: lockfiles are numbers only" \
+  '. == [{path: "apps/web/yarn.lock", renamedFrom: null, added: 1, removed: 0, generated: true, diff: null},
+         {path: "package-lock.json", renamedFrom: null, added: 1, removed: 0, generated: true, diff: null},
+         {path: "pnpm-lock.yaml", renamedFrom: null, added: 1, removed: 0, generated: true, diff: null},
+         {path: "src/x.txt", renamedFrom: null, added: 1, removed: 0, generated: false, diff: ($d + "/diff/001.diff")}]' --arg d "$bd_dir"
+count=$(ls "$bd_dir/diff" | wc -l | tr -d ' ')
+if [[ $count -eq 1 ]]; then report "branch-diff/generated: only the hand-written file gets a diff file" ok; else report "branch-diff/generated: only the hand-written file gets a diff file" fail "$count files"; fi
+PLAIN_DIR="$bd_gen" run_plain "$diff_script" file origin main package-lock.json
+expect_in_file "branch-diff/file: a generated file's diff on demand" "$tmp/data.out" "+{}"
+
+bd_attr=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_attr"
+mkdir -p "$bd_attr/gen"
+printf 'gen/* linguist-generated\n' > "$bd_attr/.gitattributes"
+printf 'x\n' > "$bd_attr/gen/out.js"
+commit_all "$bd_attr"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_attr" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/generated: attribute marks a file, .gitattributes itself is hand-written" \
+  '[.[] | {path, generated}] == [{path: ".gitattributes", generated: false}, {path: "gen/out.js", generated: true}]'
+
+bd_beat=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_beat"
+printf 'package-lock.json -linguist-generated\n' > "$bd_beat/.gitattributes"
+printf '{}\n' > "$bd_beat/package-lock.json"
+commit_all "$bd_beat"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_beat" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/generated: an explicit attribute beats the lockfile list" \
+  '[.[] | {path, generated}] == [{path: ".gitattributes", generated: false}, {path: "package-lock.json", generated: false}] and all(.[]; .diff != null)'
+
+bd_del=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_del"
+printf 'lock\n' > "$bd_del/yarn.lock"
+commit_all "$bd_del"
+git -C "$bd_del" update-ref refs/remotes/origin/main HEAD
+git -C "$bd_del" rm -q yarn.lock
+commit_all "$bd_del"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_del" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/generated: a deleted lockfile is still generated" \
+  '. == [{path: "yarn.lock", renamedFrom: null, added: 0, removed: 1, generated: true, diff: null}]'
+
+bd_lockbinary=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_lockbinary"
+printf 'a\0b\n' > "$bd_lockbinary/package-lock.json"
+commit_all "$bd_lockbinary"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_lockbinary" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/generated: a binary lockfile has null counts and no diff" \
+  '. == [{path: "package-lock.json", renamedFrom: null, added: null, removed: null, generated: true, diff: null}]'
+
+# renames: a pure rename is only listed, a rename with edits keeps one diff
+bd_ren=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_ren"
+mkdir -p "$bd_ren/a" "$bd_ren/gen"
+# every file has its own content: with equal contents git pairs the renames arbitrarily
+for f in old.txt a/old.txt gen/old.js "my old.txt"; do
+  for n in 1 2 3 4 5 6 7 8 9 10; do echo "$f line $n"; done > "$bd_ren/$f"
+done
+printf 'gen/* linguist-generated\n' > "$bd_ren/.gitattributes"
+commit_all "$bd_ren"
+git -C "$bd_ren" update-ref refs/remotes/origin/main HEAD
+mkdir -p "$bd_ren/src" "$bd_ren/b/c"
+git -C "$bd_ren" mv old.txt src/new.txt
+git -C "$bd_ren" mv "my old.txt" "my new.txt"
+git -C "$bd_ren" mv gen/old.js gen/new.js
+git -C "$bd_ren" mv a/old.txt b/c/new.txt
+sed 's/line 3$/changed/' "$bd_ren/b/c/new.txt" > "$bd_ren/b/c/new.tmp"
+mv "$bd_ren/b/c/new.tmp" "$bd_ren/b/c/new.txt"
+commit_all "$bd_ren"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_ren" run_plain "$diff_script" files origin main "$bd_dir"
+expect_jq "branch-diff/rename: pure rename is listed with its old path and no diff" \
+  '.[] | select(.path == "src/new.txt") == {path: "src/new.txt", renamedFrom: "old.txt", added: 0, removed: 0, generated: false, diff: null}'
+expect_jq "branch-diff/rename: pure rename with a space in the names" \
+  '.[] | select(.path == "my new.txt") | .renamedFrom == "my old.txt" and .diff == null'
+expect_jq "branch-diff/rename: rename with edits keeps old path and a diff file" \
+  '.[] | select(.path == "b/c/new.txt") | .renamedFrom == "a/old.txt" and .added == 1 and .removed == 1 and .generated == false and .diff != null'
+expect_jq "branch-diff/rename: renamed generated file has no diff" \
+  '.[] | select(.path == "gen/new.js") | .renamedFrom == "gen/old.js" and .generated == true and .diff == null'
+expect_jq "branch-diff/rename: one entry per renamed file, no delete plus add" 'length == 4'
+count=$(ls "$bd_dir/diff" | wc -l | tr -d ' ')
+if [[ $count -eq 1 ]]; then report "branch-diff/rename: only the rename with edits gets a diff file" ok; else report "branch-diff/rename: only the rename with edits gets a diff file" fail "$count files"; fi
+expect_in_file "branch-diff/rename: the diff shows the rename once" "$bd_dir/diff/001.diff" "rename from a/old.txt"
+if grep -q "deleted file mode" "$bd_dir/diff/001.diff"; then report "branch-diff/rename: the diff is not a delete plus add" fail "deleted file mode found"; else report "branch-diff/rename: the diff is not a delete plus add" ok; fi
+
+# user git config must not change the diff files
+bd_cfg=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_cfg"
+git -C "$bd_cfg" config color.ui always
+git -C "$bd_cfg" config diff.external /bin/true
+printf 'x\n' > "$bd_cfg/new.txt"
+commit_all "$bd_cfg"
+bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+PLAIN_DIR="$bd_cfg" run_plain "$diff_script" files origin main "$bd_dir"
+expect_in_file "branch-diff/config: diff file holds the change despite diff.external" "$bd_dir/diff/001.diff" "+x"
+if grep -q $'\033' "$bd_dir/diff/001.diff"; then report "branch-diff/config: no color codes in the diff file" fail "escape code found"; else report "branch-diff/config: no color codes in the diff file" ok; fi
+PLAIN_DIR="$bd_cfg" run_plain "$diff_script" file origin main new.txt
+if grep -q $'\033' "$tmp/data.out"; then report "branch-diff/config: no color codes from file" fail "escape code found"; else report "branch-diff/config: no color codes from file" ok; fi
+
+# file takes the old path of a renamed file
+bd_moved=$(mktemp -d "$tmp/bd-XXXXXX")
+make_branch_repo "$bd_moved"
+mkdir -p "$bd_moved/lock"
+for n in 1 2 3 4 5 6 7 8 9 10; do echo "lock line $n"; done > "$bd_moved/yarn.lock"
+commit_all "$bd_moved"
+git -C "$bd_moved" update-ref refs/remotes/origin/main HEAD
+git -C "$bd_moved" mv yarn.lock lock/yarn.lock
+echo "lock line 11" >> "$bd_moved/lock/yarn.lock"
+commit_all "$bd_moved"
+PLAIN_DIR="$bd_moved" run_plain "$diff_script" file origin main lock/yarn.lock yarn.lock
+expect_in_file "branch-diff/file: old path shows the rename" "$tmp/data.out" "rename from yarn.lock"
+expect_in_file "branch-diff/file: old path shows the change" "$tmp/data.out" "+lock line 11"
+PLAIN_DIR="$bd_moved" run_plain "$diff_script" file origin main lock/yarn.lock a b
+expect_error "branch-diff/usage: file with too many arguments" 2 usage false
+
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files nowhere main "$bd_dir"
+expect_error "branch-diff/unknown remote" 1 other false
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin missing-branch "$bd_dir"
+expect_error "branch-diff/unknown branch" 1 other false
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" file origin missing-branch base.txt
+expect_error "branch-diff/file: unknown branch" 1 other false
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$tmp/no-such-folder"
+expect_error "branch-diff/pr-dir missing" 1 other false
+run_plain "$diff_script"
+expect_error "branch-diff/usage: no arguments" 2 usage false
+run_plain "$diff_script" bogus
+expect_error "branch-diff/usage: unknown subcommand" 2 usage false
+run_plain "$diff_script" files origin main
+expect_error "branch-diff/usage: files with too few arguments" 2 usage false
+run_plain "$diff_script" file origin main
+expect_error "branch-diff/usage: file with too few arguments" 2 usage false
+
 # ---- skills: the failure rule for script calls is worded the same ----
 
 rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.'
@@ -475,6 +735,14 @@ for skill in create-pr review-pr; do
     report "skills/$skill states the failure rule" fail "sentence not found"
   fi
 done
+
+# Step 1 gets the diff from the script, not from raw git diff commands
+create_skill="$root/plugins/dotclaude-dev/skills/create-pr/SKILL.md"
+if grep -qF 'scripts/branch-diff.sh" files' "$create_skill" && ! grep -qE '^git diff <remote>/<default-branch>\.\.\.HEAD( --name-only)?$' "$create_skill"; then
+  report "skills/create-pr Step 1 uses branch-diff.sh" ok
+else
+  report "skills/create-pr Step 1 uses branch-diff.sh" fail "script call missing or a raw git diff line is left"
+fi
 
 echo "$passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]
