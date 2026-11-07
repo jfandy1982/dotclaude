@@ -1,0 +1,11 @@
+# Project
+
+## Notes
+
+### PR merge checklist
+
+Write the table later.
+
+### Other
+
+Text after the checklist.

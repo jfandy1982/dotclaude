@@ -1,0 +1,11 @@
+### PR merge checklist
+
+| File pattern | Checklist item |
+| --- | --- |
+| `a.txt` | First |
+
+### PR merge checklist
+
+| File pattern | Checklist item |
+| --- | --- |
+| `b.txt` | Second |

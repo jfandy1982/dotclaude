@@ -1,0 +1,17 @@
+# Project
+
+How to write the checklist:
+
+```markdown
+### PR merge checklist
+
+| File pattern | Checklist item |
+| --- | --- |
+| `x.txt` | Fenced |
+```
+
+### PR merge checklist
+
+| File pattern | Checklist item |
+| --- | --- |
+| `y.txt` | Real |

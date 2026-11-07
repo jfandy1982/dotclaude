@@ -1,0 +1,14 @@
+# Project
+
+## Notes
+
+### PR merge checklist
+
+| Owner | Checklist item | File pattern |
+| --- | --- | --- |
+| db | Run the migration on staging | `apps/api/migrations` |
+| dev | Check the lockfile is committed | `package.json` |
+
+### Other
+
+Text after the checklist.

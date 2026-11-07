@@ -1,0 +1,5 @@
+### PR merge checklist
+
+File pattern | Checklist item
+--- | ---
+`a.txt` | B

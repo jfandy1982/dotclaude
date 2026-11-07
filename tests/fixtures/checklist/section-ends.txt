@@ -1,0 +1,13 @@
+# Project
+
+## Notes
+
+### PR merge checklist
+
+Some text.
+
+## Later section
+
+| File pattern | Checklist item |
+| --- | --- |
+| `a.txt` | B |

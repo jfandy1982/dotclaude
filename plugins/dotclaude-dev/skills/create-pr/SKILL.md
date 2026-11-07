@@ -136,33 +136,19 @@ The script prints a JSON table with one entry per changed file. Store it as `<fi
 
 Read `<branch>` (from Precondition 1), the commit messages, `<file-table>`, and the diffs together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
 
-**Checklist table lookup.** In addition to the commands above, read exactly one file — the target repo's own root `CLAUDE.md` (same repo root the commands above already operate in, found via `git rev-parse --show-toplevel` or equivalent):
+**Checklist.** The script reads only the repository root `CLAUDE.md` and asks git which checklist rows match the changed files:
 
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-checklist.sh" <remote> <default-branch>
 ```
-Read <repo-root>/CLAUDE.md
-```
 
-Read only this path. Do not search, glob, or read any other `CLAUDE.md` — not a nested one inside the same repo, not one further up the directory tree (e.g. a workspace-level `CLAUDE.md` covering multiple repos), and not one belonging to a different repo.
+It prints one JSON line `{state, items}`:
 
-- No `CLAUDE.md` file in the repo root → no checklist. Continue silently.
-- `CLAUDE.md` exists, no `### PR merge checklist` heading → no checklist. Continue silently.
-- `### PR merge checklist` heading exists, but nothing under it parses as a markdown table, or the table is missing a `File pattern` or `Checklist item` column (matched by exact header text, not position — extra columns are ignored) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 7 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from the no-heading case above, which needs no note: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
-- Heading and a usable table (both required columns present) → proceed to matching.
+- `none` (no `CLAUDE.md` in the repository root, or no `### PR merge checklist` heading) → no checklist. Continue silently.
+- `unusable` (heading found, but no table, or the table lacks a `File pattern` or `Checklist item` column) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 7 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from `none`: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
+- `ok` → store `items` (the matching rows' items, in table order, duplicates collapsed) as `<pr-checklist>`. An empty list is the common case and is not itself a warning.
 
-**Match against changed files.** For each row with both a `File pattern` and `Checklist item` value (skip rows missing either):
-
-1. Split `File pattern` on commas into individual patterns. Trim whitespace and strip a single pair of surrounding backticks from each piece — the cells are backtick-wrapped markdown (e.g. `` `.github/labels.yml` ``), not bare paths, and matching on the unstripped form silently matches nothing.
-2. Run one command per row, passing every cleaned pattern from that row as a separate `:(glob)` pathspec:
-
-   ```bash
-   git diff <remote>/<default-branch>...HEAD --name-only -- ':(glob)<pattern-1>' ':(glob)<pattern-2>' ...
-   ```
-
-   Non-empty stdout → the row matches. Empty stdout → no match. Do not use the exit code — this command always exits `0` regardless of whether anything matched.
-
-3. A matching row contributes its `Checklist item` cell, copied as raw markdown (backticks and all), to `<pr-checklist>`.
-
-Store the result as `<pr-checklist>`, in table row order, with exact-duplicate item strings collapsed to their first occurrence. Empty `<pr-checklist>` is the common case and is not itself a warning.
+The script's answer is final: do not read `CLAUDE.md` or match patterns yourself.
 
 ### Step 2 — Issue linking
 
@@ -346,7 +332,7 @@ Default `<draft-state>` to "ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If Step 1 found a `### PR merge checklist` heading but couldn't use it (no table, or a table missing a required column), also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
 Ask with `AskUserQuestion`:
 
