@@ -253,6 +253,87 @@ run_data "$stub" issue github.example.local https://github.example.local/o/r 12 
 expect_text "issue/stdout" "$tmp/data.out" "#12 Sample (OPEN)"
 check "issue/issue-12.json" "$PR_DIR/issue-12.json" "$stub/issue-view.out"
 
+# alert: the reduced file and the printed line
+stub=$(new_stub)
+cp "$fixtures/gh/alert-open.json" "$stub/api.out"
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+expect_text "alert/stdout" "$tmp/data.out" "#3 js/sql-injection (open)"
+check "alert/alert-3.json is the reduced object" "$PR_DIR/alert-3.json" "$fixtures/gh/alert-expected.json"
+expect_call "alert/asks the code scanning API of the repository" "$stub" "api --hostname github.example.local repos/o/r/code-scanning/alerts/3"
+
+for st_n in fixed:4 dismissed:5; do
+  st=${st_n%%:*}
+  n=${st_n##*:}
+  stub=$(new_stub)
+  cp "$fixtures/gh/alert-$st.json" "$stub/api.out"
+  run_data "$stub" alert github.example.local o/r "$n" PR_DIR
+  expect_text "alert/state $st is printed" "$tmp/data.out" "#$n js/sql-injection ($st)"
+done
+
+stub=$(new_stub)
+jq '.state = "auto_dismissed"' "$fixtures/gh/alert-open.json" > "$stub/api.out"
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+expect_text "alert/an unexpected state passes through" "$tmp/data.out" "#3 js/sql-injection (auto_dismissed)"
+
+stub=$(new_stub)
+cp "$fixtures/gh/alert-no-severity.json" "$stub/api.out"
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+if jq -e '.severity == null and .ruleId == "js/unused-local"' "$PR_DIR/alert-3.json" > /dev/null 2>&1; then
+  report "alert/no severity stays null" ok
+else
+  report "alert/no severity stays null" fail "$(cat "$PR_DIR/alert-3.json" 2> /dev/null)"
+fi
+
+stub=$(new_stub)
+cp "$fixtures/gh/alert-no-instance.json" "$stub/api.out"
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+if jq -e '.message == null and .path == null' "$PR_DIR/alert-3.json" > /dev/null 2>&1; then
+  report "alert/no instance gives null message and path" ok
+else
+  report "alert/no instance gives null message and path" fail "$(cat "$PR_DIR/alert-3.json" 2> /dev/null)"
+fi
+expect_text "alert/no instance still prints the line" "$tmp/data.out" "#3 js/sql-injection (open)"
+
+stub=$(new_stub)
+jq '.most_recent_instance.message.text = "quote \" backslash \\ and\nnew line"' "$fixtures/gh/alert-open.json" > "$stub/api.out"
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+if jq -e '.message == "quote \" backslash \\ and\nnew line"' "$PR_DIR/alert-3.json" > /dev/null 2>&1; then
+  report "alert/a message with quotes, backslash and newline stays intact" ok
+else
+  report "alert/a message with quotes, backslash and newline stays intact" fail "$(cat "$PR_DIR/alert-3.json" 2> /dev/null)"
+fi
+
+stub=$(new_stub)
+fail_stub "$stub" api 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
+run_data "$stub" alert github.example.local o/r 9 PR_DIR
+expect_error "alert/not found" 11 not_found false
+expect_empty "alert/not found writes no file" "$PR_DIR"
+
+stub=$(new_stub)
+fail_stub "$stub" api 1 "Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)" '{"message":"Advanced Security must be enabled"}'
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+expect_error "alert/code scanning not enabled is not_found, no body on stdout" 11 not_found false
+expect_empty "alert/code scanning not enabled writes no file" "$PR_DIR"
+
+stub=$(new_stub)
+printf '%s\n' 'not json' > "$stub/api.out"
+run_data "$stub" alert github.example.local o/r 3 PR_DIR
+expect_error "alert/unreadable response" 1 other false
+expect_empty "alert/unreadable response writes no file" "$PR_DIR"
+
+for body in 'null' '{"most_recent_instance":null}' '{"number":"x"}' ''; do
+  stub=$(new_stub)
+  printf '%s' "$body" > "$stub/api.out"
+  run_data "$stub" alert github.example.local o/r 3 PR_DIR
+  expect_error "alert/a response that is not an alert is an error: ${body:-empty}" 1 other false
+  expect_empty "alert/a response that is not an alert writes no file: ${body:-empty}" "$PR_DIR"
+done
+
+run_data "$stub" alert github.example.local o/r abc PR_DIR
+expect_error "usage/alert number is not a number" 2 usage false
+run_data "$stub" alert github.example.local o/r 3
+expect_error "usage/alert without a folder" 2 usage false
+
 # ci works offline on the pr.json that pr wrote
 count=$(jq length "$fixtures/gh/ci-cases.json")
 i=0

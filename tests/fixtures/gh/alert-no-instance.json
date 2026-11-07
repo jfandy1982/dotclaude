@@ -1,0 +1,21 @@
+{
+  "number": 3,
+  "created_at": "2026-10-01T10:00:00Z",
+  "url": "https://github.example.local/api/v3/repos/o/r/code-scanning/alerts/3",
+  "html_url": "https://github.example.local/o/r/security/code-scanning/3",
+  "state": "open",
+  "dismissed_reason": null,
+  "rule": {
+    "id": "js/sql-injection",
+    "severity": "error",
+    "security_severity_level": "high",
+    "description": "Database query built from user-controlled sources",
+    "tags": [
+      "security"
+    ]
+  },
+  "tool": {
+    "name": "CodeQL",
+    "version": "2.15.0"
+  }
+}
