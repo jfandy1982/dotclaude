@@ -1,0 +1,16 @@
+# Project
+
+## Notes
+
+### PR merge checklist
+
+| File pattern | Checklist item |
+| --- | --- |
+| | Item without pattern |
+| `x.txt` | |
+| `./` | Item with an empty pattern |
+| `y.txt` | Keep this |
+
+### Other
+
+Text after the checklist.

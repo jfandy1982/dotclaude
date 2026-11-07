@@ -1,0 +1,297 @@
+[
+  {
+    "name": "no-heading",
+    "fixture": "no-heading.txt",
+    "expected": {
+      "state": "none",
+      "rows": []
+    }
+  },
+  {
+    "name": "heading-no-table",
+    "fixture": "heading-no-table.txt",
+    "expected": {
+      "state": "unusable",
+      "rows": []
+    }
+  },
+  {
+    "name": "missing-column",
+    "fixture": "missing-column.txt",
+    "expected": {
+      "state": "unusable",
+      "rows": []
+    }
+  },
+  {
+    "name": "ok-basic",
+    "fixture": "ok-basic.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "apps/api/migrations"
+          ],
+          "item": "Run the migration on staging"
+        },
+        {
+          "patterns": [
+            "package.json"
+          ],
+          "item": "Check the lockfile is committed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "columns-reordered-extra",
+    "fixture": "columns-reordered-extra.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "apps/api/migrations"
+          ],
+          "item": "Run the migration on staging"
+        },
+        {
+          "patterns": [
+            "package.json"
+          ],
+          "item": "Check the lockfile is committed"
+        }
+      ]
+    }
+  },
+  {
+    "name": "cleaning",
+    "fixture": "cleaning.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "apps/**/migrations/*",
+            "package.json"
+          ],
+          "item": "Item A"
+        },
+        {
+          "patterns": [
+            ".github/labels.yml",
+            "docs/x.md"
+          ],
+          "item": "Item B"
+        }
+      ]
+    }
+  },
+  {
+    "name": "item-raw",
+    "fixture": "item-raw.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "x.txt"
+          ],
+          "item": "Run `npm run migrate` locally"
+        }
+      ]
+    }
+  },
+  {
+    "name": "escaped-pipe",
+    "fixture": "escaped-pipe.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "x.txt"
+          ],
+          "item": "Check a \\| b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "skip-empty",
+    "fixture": "skip-empty.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "y.txt"
+          ],
+          "item": "Keep this"
+        }
+      ]
+    }
+  },
+  {
+    "name": "section-ends",
+    "fixture": "section-ends.txt",
+    "expected": {
+      "state": "unusable",
+      "rows": []
+    }
+  },
+  {
+    "name": "section-deeper-heading",
+    "fixture": "section-deeper-heading.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "a.txt"
+          ],
+          "item": "B"
+        }
+      ]
+    }
+  },
+  {
+    "name": "heading-trailing-spaces",
+    "fixture": "heading-trailing-spaces.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "a.txt"
+          ],
+          "item": "B"
+        }
+      ]
+    }
+  },
+  {
+    "name": "backticks-list",
+    "fixture": "backticks-list.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "a.txt",
+            "b.txt"
+          ],
+          "item": "Item list"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fence-heading",
+    "fixture": "fence-heading.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "y.txt"
+          ],
+          "item": "Real"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fence-comment",
+    "fixture": "fence-comment.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "y.txt"
+          ],
+          "item": "Real"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fence-only-table",
+    "fixture": "fence-only-table.txt",
+    "expected": {
+      "state": "unusable",
+      "rows": []
+    }
+  },
+  {
+    "name": "two-headings",
+    "fixture": "two-headings.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "a.txt"
+          ],
+          "item": "First"
+        }
+      ]
+    }
+  },
+  {
+    "name": "indented-heading",
+    "fixture": "indented-heading.txt",
+    "expected": {
+      "state": "none",
+      "rows": []
+    }
+  },
+  {
+    "name": "level-four-heading",
+    "fixture": "level-four-heading.txt",
+    "expected": {
+      "state": "none",
+      "rows": []
+    }
+  },
+  {
+    "name": "no-outer-pipes",
+    "fixture": "no-outer-pipes.txt",
+    "expected": {
+      "state": "unusable",
+      "rows": []
+    }
+  },
+  {
+    "name": "no-trailing-pipe",
+    "fixture": "no-trailing-pipe.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "a.txt"
+          ],
+          "item": "B"
+        }
+      ]
+    }
+  },
+  {
+    "name": "pipe-in-backticks",
+    "fixture": "pipe-in-backticks.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "a.txt"
+          ],
+          "item": "Run `a"
+        }
+      ]
+    }
+  }
+]

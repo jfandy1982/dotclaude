@@ -725,6 +725,216 @@ expect_error "branch-diff/usage: files with too few arguments" 2 usage false
 run_plain "$diff_script" file origin main
 expect_error "branch-diff/usage: file with too few arguments" 2 usage false
 
+# ---- pr-checklist-parse.jq ----
+
+checklist_parser="$root/plugins/dotclaude-dev/scripts/pr-checklist-parse.jq"
+cl_count=$(jq length "$fixtures/checklist/cases.json")
+i=0
+while [[ $i -lt $cl_count ]]; do
+  cl_fixture=$(jq -r ".[$i].fixture" "$fixtures/checklist/cases.json")
+  jq ".[$i].expected" "$fixtures/checklist/cases.json" > "$tmp/cl-expected.json"
+  jq -Rs -f "$checklist_parser" "$fixtures/checklist/$cl_fixture" > "$tmp/cl-actual.json" 2> "$tmp/err" || cat "$tmp/err"
+  check "checklist-parse/$(jq -r ".[$i].name" "$fixtures/checklist/cases.json")" "$tmp/cl-actual.json" "$tmp/cl-expected.json"
+  i=$((i + 1))
+done
+
+# CRLF is generated, not stored (like the body fixtures)
+awk '{printf "%s\r\n", $0}' "$fixtures/checklist/ok-basic.txt" > "$tmp/crlf.txt"
+jq -Rs -f "$checklist_parser" "$tmp/crlf.txt" > "$tmp/cl-actual.json" 2> "$tmp/err" || cat "$tmp/err"
+jq '.[] | select(.name == "ok-basic") | .expected' "$fixtures/checklist/cases.json" > "$tmp/cl-expected.json"
+check "checklist-parse/ok-basic (CRLF)" "$tmp/cl-actual.json" "$tmp/cl-expected.json"
+
+printf '' > "$tmp/empty.txt"
+jq -Rs -f "$checklist_parser" "$tmp/empty.txt" > "$tmp/cl-actual.json" 2> "$tmp/err" || cat "$tmp/err"
+printf '%s\n' '{"state":"none","rows":[]}' > "$tmp/cl-expected.json"
+check "checklist-parse/empty input" "$tmp/cl-actual.json" "$tmp/cl-expected.json"
+
+# ---- pr-checklist.sh ----
+# Each case builds a scratch repository: CLAUDE.md with a checklist is committed before origin/main is set, so it is not a change itself.
+
+checklist_script="$root/plugins/dotclaude-dev/scripts/pr-checklist.sh"
+
+# write_checklist <dir>: writes <dir>/CLAUDE.md; the table rows come from stdin as "pattern cell|item cell"
+write_checklist() {
+  local dir=$1 row
+  {
+    printf '# Project\n\n### PR merge checklist\n\n| File pattern | Checklist item |\n| --- | --- |\n'
+    while IFS= read -r row; do printf '| %s | %s |\n' "${row%%|*}" "${row#*|}"; done
+    printf '\n### Other\n'
+  } > "$dir/CLAUDE.md"
+  return 0
+}
+
+# make_checklist_repo <dir> <file>...: a branch repository whose CLAUDE.md checklist (rows from stdin) is on origin/main,
+# with the given files added on the feature branch
+make_checklist_repo() {
+  local dir=$1 f
+  shift
+  make_branch_repo "$dir"
+  write_checklist "$dir"
+  commit_all "$dir"
+  git -C "$dir" update-ref refs/remotes/origin/main HEAD
+  for f in "$@"; do
+    mkdir -p "$dir/$(dirname "$f")"
+    echo x > "$dir/$f"
+  done
+  commit_all "$dir"
+  return 0
+}
+
+cl_rows='`package.json`|Item concrete
+`apps/api/migrations`|Item directory
+`apps/**/migrations/*`|Item star
+`apps/**/migrations/**`|Item deep
+`./apps/web/**`|Item dot slash
+`nothing.txt`, `docs/a.md`|Item list
+`docs/*.md`|Item docs
+`**/*.md`|Item docs
+`unrelated/**`|Item unrelated'
+
+cl_repo=$(mktemp -d "$tmp/cl-XXXXXX")
+make_checklist_repo "$cl_repo" apps/api/migrations/sub/002.ts apps/web/x/page.ts docs/a.md package.json << EOT
+$cl_rows
+EOT
+PLAIN_DIR="$cl_repo" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/file, directory, **, ./, comma list, duplicates; * stays on one level" \
+  '. == {state: "ok", items: ["Item concrete", "Item directory", "Item deep", "Item dot slash", "Item list", "Item docs"]}'
+PLAIN_DIR="$cl_repo/apps" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/from a subdirectory the result is the same" \
+  '. == {state: "ok", items: ["Item concrete", "Item directory", "Item deep", "Item dot slash", "Item list", "Item docs"]}'
+
+cl_star=$(mktemp -d "$tmp/cl-XXXXXX")
+make_checklist_repo "$cl_star" apps/api/migrations/001.ts apps/migrations/003.ts << EOT
+$cl_rows
+EOT
+PLAIN_DIR="$cl_star" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/* matches direct children of a folder, ** also matches zero folders" \
+  '. == {state: "ok", items: ["Item directory", "Item star", "Item deep"]}'
+
+cl_none=$(mktemp -d "$tmp/cl-XXXXXX")
+make_checklist_repo "$cl_none" src/other.txt << EOT
+$cl_rows
+EOT
+PLAIN_DIR="$cl_none" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/no row matches" '. == {state: "ok", items: []}'
+
+cl_moved=$(mktemp -d "$tmp/cl-XXXXXX")
+make_branch_repo "$cl_moved"
+write_checklist "$cl_moved" << 'EOT'
+`old/mig/**`|Item moved out
+`gone.txt`|Item deleted
+EOT
+mkdir -p "$cl_moved/old/mig"
+for n in 1 2 3 4 5 6 7 8 9 10; do echo "mig line $n"; done > "$cl_moved/old/mig/001.ts"
+echo gone > "$cl_moved/gone.txt"
+commit_all "$cl_moved"
+git -C "$cl_moved" update-ref refs/remotes/origin/main HEAD
+mkdir -p "$cl_moved/elsewhere"
+git -C "$cl_moved" mv old/mig/001.ts elsewhere/001.ts
+git -C "$cl_moved" rm -q gone.txt
+commit_all "$cl_moved"
+PLAIN_DIR="$cl_moved" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/a file moved out of a folder and a deleted file both match" \
+  '. == {state: "ok", items: ["Item moved out", "Item deleted"]}'
+
+cl_missing=$(mktemp -d "$tmp/cl-XXXXXX")
+make_branch_repo "$cl_missing"
+echo x > "$cl_missing/new.txt"
+commit_all "$cl_missing"
+PLAIN_DIR="$cl_missing" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/no CLAUDE.md" '. == {state: "none", items: []}'
+
+cl_sub=$(mktemp -d "$tmp/cl-XXXXXX")
+make_branch_repo "$cl_sub"
+mkdir -p "$cl_sub/sub"
+write_checklist "$cl_sub/sub" << 'EOT'
+`new.txt`|Item from a subfolder
+EOT
+echo x > "$cl_sub/new.txt"
+commit_all "$cl_sub"
+PLAIN_DIR="$cl_sub" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/a CLAUDE.md in a subfolder is not read" '. == {state: "none", items: []}'
+
+cl_outer=$(mktemp -d "$tmp/cl-XXXXXX")
+write_checklist "$cl_outer" << 'EOT'
+`new.txt`|Item from the parent folder
+EOT
+make_branch_repo "$cl_outer/inner"
+echo x > "$cl_outer/inner/new.txt"
+commit_all "$cl_outer/inner"
+PLAIN_DIR="$cl_outer/inner" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/a CLAUDE.md in a parent folder is not read" '. == {state: "none", items: []}'
+
+cl_bad=$(mktemp -d "$tmp/cl-XXXXXX")
+make_branch_repo "$cl_bad"
+printf '### PR merge checklist\n\nTable follows later.\n' > "$cl_bad/CLAUDE.md"
+echo x > "$cl_bad/new.txt"
+commit_all "$cl_bad"
+PLAIN_DIR="$cl_bad" run_plain "$checklist_script" origin main
+expect_jq "pr-checklist/heading without a table is unusable, not an error" '. == {state: "unusable", items: []}'
+
+cl_plain=$(mktemp -d "$tmp/cl-XXXXXX")
+make_branch_repo "$cl_plain"
+printf '# Project\n\nNo checklist.\n' > "$cl_plain/CLAUDE.md"
+commit_all "$cl_plain"
+PLAIN_DIR="$cl_plain" run_plain "$checklist_script" origin missing-branch
+expect_jq "pr-checklist/no checklist heading does not need the remote branch" '. == {state: "none", items: []}'
+PLAIN_DIR="$cl_bad" run_plain "$checklist_script" origin missing-branch
+expect_jq "pr-checklist/an unusable table does not need the remote branch" '. == {state: "unusable", items: []}'
+
+PLAIN_DIR="$cl_repo" run_plain "$checklist_script" origin missing-branch
+expect_error "pr-checklist/unknown remote-tracking branch" 1 other false
+run_plain "$checklist_script" origin
+expect_error "pr-checklist/usage: one argument" 2 usage false
+run_plain "$checklist_script" origin main extra
+expect_error "pr-checklist/usage: three arguments" 2 usage false
+
+# ---- git failures: run_git puts git's own reason into the message ----
+
+# make_lone_repo <dir>: HEAD shares no history with origin/main, so every diff against it fails (no merge base)
+make_lone_repo() {
+  local dir=$1
+  make_branch_repo "$dir"
+  git -C "$dir" checkout -q --orphan lone
+  git -C "$dir" rm -rfq .
+  write_checklist "$dir" << 'EOT'
+`new.txt`|Item new
+EOT
+  echo x > "$dir/new.txt"
+  commit_all "$dir"
+  return 0
+}
+
+# expect_error_message <name> <text>: the message of the last error line contains the text
+expect_error_message() {
+  local name=$1 text=$2
+  if jq -e --arg t "$text" '.message | contains($t)' "$tmp/data.err" > /dev/null 2>&1; then
+    report "$name" ok
+  else
+    report "$name" fail "stderr: $(cat "$tmp/data.err")"
+  fi
+  return 0
+}
+
+rg_lone=$(mktemp -d "$tmp/lone-XXXXXX")
+make_lone_repo "$rg_lone"
+rg_dir=$(mktemp -d "$tmp/folder-XXXXXX")
+# git's messages are translated: LC_ALL=C makes the text comparable
+LC_ALL=C PLAIN_DIR="$rg_lone" run_plain "$checklist_script" origin main
+expect_error "run_git/pr-checklist: no merge base is one error line" 1 other false
+expect_error_message "run_git/pr-checklist: the message carries git's reason" "no merge base"
+LC_ALL=C PLAIN_DIR="$rg_lone" run_plain "$diff_script" files origin main "$rg_dir"
+expect_error "run_git/branch-diff files: no merge base is one error line" 1 other false
+expect_error_message "run_git/branch-diff files: the message carries git's reason" "no merge base"
+
+rg_bare=$(mktemp -d "$tmp/bare-XXXXXX")
+LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$checklist_script" origin main
+expect_error "run_git/pr-checklist: outside a repository" 1 other false
+expect_error_message "run_git/pr-checklist: outside a repository, git's reason" "not a git repository"
+LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$rg_dir"
+expect_error "run_git/branch-diff files: outside a repository" 1 other false
+expect_error_message "run_git/branch-diff files: outside a repository, git's reason" "not a git repository"
+
 # ---- skills: the failure rule for script calls is worded the same ----
 
 rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.'
@@ -742,6 +952,13 @@ if grep -qF 'scripts/branch-diff.sh" files' "$create_skill" && ! grep -qE '^git 
   report "skills/create-pr Step 1 uses branch-diff.sh" ok
 else
   report "skills/create-pr Step 1 uses branch-diff.sh" fail "script call missing or a raw git diff line is left"
+fi
+
+# Step 1 gets the checklist from the script
+if grep -qF 'scripts/pr-checklist.sh" ' "$create_skill" && ! grep -qF ':(glob)' "$create_skill"; then
+  report "skills/create-pr Step 1 uses pr-checklist.sh" ok
+else
+  report "skills/create-pr Step 1 uses pr-checklist.sh" fail "script call missing or :(glob) is left"
 fi
 
 echo "$passed passed, $failed failed"

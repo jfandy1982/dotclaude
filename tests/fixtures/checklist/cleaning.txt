@@ -1,0 +1,14 @@
+# Project
+
+## Notes
+
+### PR merge checklist
+
+| File pattern | Checklist item |
+| --- | --- |
+| `./apps/**/migrations/*` , `package.json` | Item A |
+| `.github/labels.yml`, ,  `docs/x.md` | Item B |
+
+### Other
+
+Text after the checklist.

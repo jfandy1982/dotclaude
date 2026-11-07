@@ -1,0 +1,12 @@
+### PR merge checklist
+
+Run this first:
+
+```bash
+# comment line inside the fence
+npm test
+```
+
+| File pattern | Checklist item |
+| --- | --- |
+| `y.txt` | Real |

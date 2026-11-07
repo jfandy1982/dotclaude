@@ -1,0 +1,9 @@
+### PR merge checklist
+
+Example:
+
+```markdown
+| File pattern | Checklist item |
+| --- | --- |
+| `x.txt` | Fenced |
+```

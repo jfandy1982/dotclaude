@@ -1,4 +1,4 @@
-# Error contract of the GitHub scripts (pr-data.sh, pr-create.sh). Sourced, not run.
+# Error contract of the scripts that call gh or git (pr-data.sh, pr-create.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
 # The sourcing script sets SCRIPT and SUBCOMMANDS (for the usage message) and may set VERB (default "read", "create" for writes).
 # On failure: nothing on stdout, one JSON line on stderr {error, exit, retryable, what, message}
 # and a fixed exit code: 10 auth, 11 not_found, 12 rate_limited, 13 network, 1 other, 2 usage.
@@ -60,6 +60,19 @@ run_gh() {
   shift
   OUT=$(gh "$@" 2> "$ERR_FILE") || code=$?
   [[ $code -eq 0 ]] || fail "$what" "$code"
+  return 0
+}
+
+# run_git <what> <git-arguments...>: runs git with its stdout passed through, so the caller can capture it or redirect it to a file.
+# git errors are local (no login, no rate limit, no network) and not retryable: always "other", with git's own first error line in the message.
+# A failed call never reaches the caller; inside $(...) the exit only ends the subshell, so write: x=$(run_git ...) || exit $?
+run_git() {
+  local what=$1 code=0 first
+  shift
+  git "$@" 2> "$ERR_FILE" || code=$?
+  [[ $code -eq 0 ]] && return 0
+  first=$(head -n 1 "$ERR_FILE")
+  emit_error other 1 false "$what" "Could not $VERB $what: ${first:-git exited with code $code}."
   return 0
 }
 
