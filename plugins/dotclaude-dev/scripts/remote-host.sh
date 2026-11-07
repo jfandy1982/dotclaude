@@ -16,24 +16,25 @@ source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
 
 # host_of <url>: prints the host, nothing when there is none
 host_of() {
-  printf '%s\n' "$1" | sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*##'
+  local url=$1
+  printf '%s\n' "$url" | sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*##'
   return 0
 }
 
 main() {
-  local url host
-  case $# in
-    1) [[ $1 != --url ]] || usage
-       url=$(git remote get-url "$1" 2> /dev/null) || die "remote $1" "No remote named $1 in this repository."
+  local count=$# first=${1:-} second=${2:-} url host
+  case $count in
+    1) [[ $first != --url ]] || usage
+       url=$(git remote get-url "$first" 2> /dev/null) || die "remote $first" "No remote named $first in this repository."
        ;;
-    2) [[ $1 == --url ]] || usage
-       url=$2
+    2) [[ $first == --url ]] || usage
+       url=$second
        ;;
     *) usage ;;
   esac
   host=$(host_of "$url")
   [[ -n $host ]] || die "remote host" "Cannot read a host from the URL $url."
-  [[ $# -eq 2 ]] || printf '%s\n' "$url"
+  [[ $count -eq 2 ]] || printf '%s\n' "$url"
   printf '%s\n' "$host"
   return 0
 }
