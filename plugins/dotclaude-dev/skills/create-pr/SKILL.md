@@ -99,7 +99,7 @@ Non-zero exit → stop:
 
 Store the printed path as `<pr-dir>`. Do not delete it.
 
-The folder later holds `labels.json`, `issue-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
+The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
 Every stored value is reused in later steps; never re-run a command whose result is stored.
 
@@ -122,15 +122,21 @@ Run these steps in this exact order. Inference in Steps 4–7 (labels, file risk
 
 ```bash
 git log <remote>/<default-branch>..HEAD
-git diff <remote>/<default-branch>...HEAD --name-only
-git diff <remote>/<default-branch>...HEAD
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" files <remote> <default-branch> <pr-dir>
 ```
 
-Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); `git diff` uses three dots (diff against the merge-base) so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
+Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); the script diffs against the merge-base, so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
 
-Read `<branch>` (from Precondition 1), the commit messages, the list of changed files, and the actual diff content together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
+The script prints a JSON table with one entry per changed file. Store it as `<file-table>` and do not run the script again; after a failed run do not read any file in `<pr-dir>/diff/`.
 
-**Checklist table lookup.** In addition to the git commands above, read exactly one file — the target repo's own root `CLAUDE.md` (same repo root the git commands above already operate in, found via `git rev-parse --show-toplevel` or equivalent):
+- Fields: `path`; `renamedFrom` (old path of a renamed file, else `null`); `added` and `removed` (line counts, `null` for a binary file); `generated`; `diff` (path of the file's diff, or `null`).
+- `diff` is set → read that file, one read per file.
+- `diff` is `null` and `generated` is false → a pure rename: only listed, nothing to read.
+- `generated` is true (a lockfile, or marked `linguist-generated` in `.gitattributes`) → numbers only. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" file <remote> <default-branch> <path> [<renamedFrom>]` only when a step needs the file's content (which package, major bump); pass `renamedFrom` when it is not `null`. Empty output means the path is not part of this PR: re-check the path in `<file-table>`.
+
+Read `<branch>` (from Precondition 1), the commit messages, `<file-table>`, and the diffs together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
+
+**Checklist table lookup.** In addition to the commands above, read exactly one file — the target repo's own root `CLAUDE.md` (same repo root the commands above already operate in, found via `git rev-parse --show-toplevel` or equivalent):
 
 ```
 Read <repo-root>/CLAUDE.md
@@ -259,7 +265,7 @@ Store the final label set as `<selected-labels>`.
 
 ### Step 5 — File risk
 
-Using the changed files list from Step 1, `<issue-context>` from Step 2, `<codeql-context>` from Step 3, and the label descriptions fetched in Step 4, classify each file.
+Using the `<file-table>` paths from Step 1, `<issue-context>` from Step 2, `<codeql-context>` from Step 3, and the label descriptions fetched in Step 4, classify each file.
 
 | Risk | File characteristics |
 | --- | --- |
@@ -267,7 +273,7 @@ Using the changed files list from Step 1, `<issue-context>` from Step 2, `<codeq
 | **Medium** | Service methods, DTOs, state management, API contracts, CI/CD workflows (`.github/workflows/*`); default for unrecognized files |
 | **Low** | Tests, renaming, styling/templates, README, config files |
 
-Classify by what actually changed in the diff, not just the file name — e.g. a one-line version bump in `package-lock.json` stays Low, while hundreds of changed lines from a major upgrade may warrant a higher classification.
+Classify by what actually changed in the diff, not just the file name — e.g. a one-line version bump in `package-lock.json` stays Low, while hundreds of changed lines from a major upgrade may warrant a higher classification. For a generated file the numbers in `<file-table>` are the evidence (Step 1 says when to read more).
 
 Also weigh each file against the PR's overall intent, not just its own diff in isolation — the same file pair can rank differently depending on what the PR is actually about. In a dependency-update PR, `package.json` is the intentional change and outranks `package-lock.json`, which is just the mechanical follow-on. In a feature PR that happens to add a dependency, the reverse holds — `package-lock.json` (and often `package.json` itself) is a low-risk side effect, and the real risk sits in the feature code elsewhere in the diff. Derive the PR's overall intent from the branch context gathered in Step 1 (commit messages, branch name, dominant change) rather than reasoning about each file in a vacuum.
 
@@ -283,7 +289,7 @@ Within a subsection, two files can share the same bucket but not the same severi
 
 #### Format
 
-Build a draft with one subsection per risk level, in order Critical → Medium → Low. All three subsections are always present, even when a risk level has no files — keep the heading and leave the file list empty, no placeholder bullet (one blank line before the next heading, same spacing as a populated subsection). Each file gets a one-line annotation (≤10 words) summarizing what changed in that file, derived from the diff content gathered in Step 1:
+Build a draft with one subsection per risk level, in order Critical → Medium → Low. All three subsections are always present, even when a risk level has no files — keep the heading and leave the file list empty, no placeholder bullet (one blank line before the next heading, same spacing as a populated subsection). Each file gets a one-line annotation (≤10 words) summarizing what changed in that file, derived from the diff gathered in Step 1 (for a generated file or a pure rename: from its numbers, `renamedFrom` and the other changed files):
 
 ```markdown
 ## File risk
