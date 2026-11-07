@@ -1042,5 +1042,12 @@ else
   report "skills/create-pr Step 1 uses pr-checklist.sh" fail "script call missing or :(glob) is left"
 fi
 
+# Step 3 gets the alert from the script
+if grep -qF 'scripts/pr-data.sh" alert' "$create_skill" && ! grep -qF 'repos/{owner}/{repo}' "$create_skill"; then
+  report "skills/create-pr Step 3 uses pr-data.sh alert" ok
+else
+  report "skills/create-pr Step 3 uses pr-data.sh alert" fail "script call missing or repos/{owner}/{repo} is left"
+fi
+
 echo "$passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]
