@@ -338,6 +338,7 @@ Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk +
 Ask with `AskUserQuestion`:
 
 - Question: "Does this PR look right?"
+- Put the full combined preview text into the `preview` field of every option, so it is visible in the dialog whichever option has focus; do not also print it as text above the dialog.
 - Options:
   - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 8
   - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Merge danger. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
