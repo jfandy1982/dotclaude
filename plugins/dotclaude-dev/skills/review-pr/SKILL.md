@@ -157,7 +157,7 @@ Collects what the reviewers need to know about the PR. It runs after the content
 
 Prints the summary of `<context>` from Gate 3. A `<context.mergeDanger>` of `null` means a two-way change.
 
-Print the one-line summary as its own message: `PR context: File risk <critical> critical · <medium> medium · <low> low · Merge danger: <one-way or none> · Closes: <#numbers or none>`, with the counts from `<context.fileRisk>` and the numbers from `<context.closes.numbers>`.
+Print the one-line summary as its own message: `PR context: File risk <buckets> · Merge danger: <one-way or none> · Closes: <#numbers or none>`, with `<buckets>` the names of the `<context.fileRisk>` buckets that have entries, in order critical · medium · low, and the numbers from `<context.closes.numbers>`.
 
 Then print each warning that applies, as its own line:
 
