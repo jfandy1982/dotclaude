@@ -221,6 +221,19 @@ awk '{printf "%s\r\n", $0}' "$fixtures/body/full-valid.txt" > "$tmp/crlf.txt"
 jq -Rs -f "$parser" "$tmp/crlf.txt" > "$tmp/actual.json" 2> "$tmp/err" || cat "$tmp/err"
 check "body/full-valid (CRLF)" "$tmp/actual.json" "$fixtures/body/full-valid.json"
 
+# the skeleton in references/pr-body.md is a body the parser reads, with all six sections in it
+body_contract="$root/plugins/dotclaude-dev/references/pr-body.md"
+awk '/^## Skeleton/ {on = 1; next} on && /^```markdown/ {grab = 1; next} grab && /^```/ {exit} grab {print}' "$body_contract" |
+  sed 's/<number>/1/g' > "$tmp/skeleton.txt"
+jq -Rs -f "$parser" "$tmp/skeleton.txt" > "$tmp/actual.json" 2> "$tmp/err" || cat "$tmp/err"
+if [[ $(grep -c '^## ' "$tmp/skeleton.txt") -eq 6 ]] &&
+  jq -e '.fileRisk.state == "ok" and (.fileRisk.Critical | length) == 1 and (.fileRisk.Medium | length) == 0 and (.fileRisk.Low | length) == 2
+    and .mergeDanger != null and .closes == {state: "ok", numbers: [1]}' "$tmp/actual.json" > /dev/null; then
+  report "body/skeleton in pr-body.md is a valid body" ok
+else
+  report "body/skeleton in pr-body.md is a valid body" fail "skeleton: $(cat "$tmp/skeleton.txt") parsed: $(cat "$tmp/actual.json")"
+fi
+
 # ---- worktree state ----
 # The fixtures are real `git worktree list --porcelain` output with the paths shortened and the commit ids replaced by readable names,
 # except the prunable entry, which is hand-written
