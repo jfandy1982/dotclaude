@@ -8,6 +8,7 @@
 HOST=""
 OUT=""
 VERB="read"
+RANGE=""
 
 command -v jq > /dev/null 2>&1 || { echo "${SCRIPT:-contract.sh}: jq is required" >&2; exit 1; }
 ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/dotclaude-gh-XXXXXX") || exit 1
@@ -86,4 +87,14 @@ write_file() {
   fi
   rm -f "$tmp"
   die "$name" "Cannot write $dir/$name."
+}
+
+# set_range <remote> <default-branch>: sets RANGE to the three-dot range (the changes since the merge-base), dies when the remote-tracking branch does not exist
+set_range() {
+  local remote=$1 base=$2
+  run_git "repository" rev-parse --git-dir > /dev/null
+  git rev-parse --verify --quiet "refs/remotes/$remote/$base^{commit}" > /dev/null 2>&1 ||
+    die "$remote/$base" "No remote-tracking branch $remote/$base in this repository."
+  RANGE="$remote/$base...HEAD"
+  return 0
 }

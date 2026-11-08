@@ -57,9 +57,7 @@ main() {
     jq -nc --arg state "$state" '{state: $state, items: []}'
     return 0
   fi
-  # shortcut: the same five-line ref check is in branch-diff.sh, merge into one place in the consistency review
-  git rev-parse --verify --quiet "refs/remotes/$remote/$base^{commit}" > /dev/null 2>&1 ||
-    die "$remote/$base" "No remote-tracking branch $remote/$base in this repository."
+  set_range "$remote" "$base"
   while IFS= read -r row; do
     item=$(printf '%s' "$row" | jq -r '.item')
     specs=()
@@ -67,7 +65,7 @@ main() {
       specs+=(":(top,glob)$pattern")
     done < <(printf '%s' "$row" | jq -r '.patterns[]')
     # the exit code of git diff does not tell a match from none: the output does
-    out=$(run_git "changed files of $remote/$base...HEAD" -C "$top" diff "$remote/$base...HEAD" --name-only --no-renames -- "${specs[@]}") ||
+    out=$(run_git "changed files of $RANGE" -C "$top" diff "$RANGE" --name-only --no-renames -- "${specs[@]}") ||
       exit $?
     [[ -z $out ]] ||
       items=$(printf '%s' "$items" | jq -c --arg item "$item" 'if index($item) then . else . + [$item] end')

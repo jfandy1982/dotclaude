@@ -965,6 +965,13 @@ expect_jq "pr-checklist/an unusable table does not need the remote branch" '. ==
 
 PLAIN_DIR="$cl_repo" run_plain "$checklist_script" origin missing-branch
 expect_error "pr-checklist/unknown remote-tracking branch" 1 other false
+checklist_message=$(jq -r '.message' "$tmp/data.err")
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin missing-branch "$bd_dir"
+if [[ $(jq -r '.message' "$tmp/data.err") == "$checklist_message" ]]; then
+  report "set_range: branch-diff and pr-checklist give the same message for a missing branch" ok
+else
+  report "set_range: branch-diff and pr-checklist give the same message for a missing branch" fail "checklist: $checklist_message"$'\n'"branch-diff: $(cat "$tmp/data.err")"
+fi
 run_plain "$checklist_script" origin
 expect_error "pr-checklist/usage: one argument" 2 usage false
 run_plain "$checklist_script" origin main extra

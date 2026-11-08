@@ -15,22 +15,11 @@ SUBCOMMANDS='files|file'
 # shellcheck source=contract.sh
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
-RANGE=""
 # the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file; removed on exit with the contract's own scratch file
 LISTING=$(mktemp "${TMPDIR:-/tmp}/dotclaude-list-XXXXXX") || exit 1
 trap 'rm -f "$ERR_FILE" "$LISTING"' EXIT
 # Lockfiles that are generated unless .gitattributes says otherwise; other lockfiles: mark them linguist-generated in the repository
 LOCKFILES="package-lock.json yarn.lock pnpm-lock.yaml"
-
-# set_range <remote> <default-branch>: sets RANGE to the three-dot range, dies when the remote-tracking branch does not exist
-set_range() {
-  local remote=$1 base=$2
-  run_git "repository" rev-parse --git-dir > /dev/null
-  git rev-parse --verify --quiet "refs/remotes/$remote/$base^{commit}" > /dev/null 2>&1 ||
-    die "$remote/$base" "No remote-tracking branch $remote/$base in this repository."
-  RANGE="$remote/$base...HEAD"
-  return 0
-}
 
 # file_diff <path> [<old-path>]: prints the diff of one path; ":(top,literal)" makes the path relative to the repository root and matches no glob.
 # A renamed file needs both paths, otherwise git shows a delete plus an add.
