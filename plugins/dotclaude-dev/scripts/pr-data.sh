@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # GitHub reads of review-pr behind one error contract.
-#   pr-data.sh pr <host> <repo-url> <pr-arg> <pr-dir>
+# Host, repository URL and repository path come from <pr-dir>/preflight.json (written by preflight.sh).
+#   pr-data.sh pr <pr-arg> <pr-dir>
 #       one gh pr view with all PR fields (including CI rollup, comments, reviews) plus the base commit;
 #       writes <pr-dir>/pr.json and <pr-dir>/body.txt, prints pr.json without the bulky fields
-#   pr-data.sh issue <host> <repo-url> <issue-number> <pr-dir>
+#   pr-data.sh issue <issue-number> <pr-dir>
 #       writes <pr-dir>/issue-<issue-number>.json, prints "#<number> <title> (<STATE>)"
-#   pr-data.sh alert <host> <repo-path> <alert-number> <pr-dir>
+#   pr-data.sh alert <alert-number> <pr-dir>
 #       one code scanning alert, reduced to {number, state, url, ruleId, ruleDescription, severity, message, path}
 #       (missing parts null), written to <pr-dir>/alert-<alert-number>.json, prints "#<number> <ruleId> (<state>)"
 #   pr-data.sh ci <pr-dir>
 #       reads <pr-dir>/pr.json, prints {passed, failed, pending}
-#   pr-data.sh feedback <host> <repo-path> <pr-number> <pr-dir>
+#   pr-data.sh feedback <pr-number> <pr-dir>
 #       reads comments and reviews from <pr-dir>/pr.json, fetches the inline comments,
 #       writes <pr-dir>/feedback.json, prints the counts
 # Errors follow the contract in contract.sh (one JSON line on stderr, fixed exit codes).
@@ -30,18 +31,18 @@ require_pr_json() {
 }
 
 cmd_pr() {
-  local host=$1 repo_url=$2 pr_arg=$3 dir=$4 json body repo_path number base
-  HOST=$host
-  run_gh "PR $pr_arg" pr view "$pr_arg" --repo "$repo_url" \
+  local pr_arg=$1 dir=$2 json body repo_path number base
+  load_preflight "$dir"
+  run_gh "PR $pr_arg" pr view "$pr_arg" --repo "$REPO_URL" \
     --json number,url,title,body,labels,files,author,state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles,statusCheckRollup,comments,reviews
   json=$OUT
   # the repository is taken from the PR's own URL: a PR URL makes gh read another repository than --repo
   repo_path=$(printf '%s' "$json" | jq -r '.url | capture("^https://[^/]+/(?<path>.+)/pull/[0-9]+$").path') ||
     die "PR $pr_arg" "Cannot read the PR URL returned by gh."
   number=$(printf '%s' "$json" | jq -r '.number') || die "PR $pr_arg" "Cannot read the PR number returned by gh."
-  run_gh "base commit of PR #$number" api --hostname "$host" "repos/$repo_path/pulls/$number"
+  run_gh "base commit of PR #$number" api --hostname "$HOST" "repos/$repo_path/pulls/$number"
   base=$(printf '%s' "$OUT" | jq -r '.base.sha') || die "PR $pr_arg" "Cannot read the base commit returned by gh."
-  json=$(printf '%s' "$json" | jq --arg repo "$repo_url" --arg base "$base" '. + {
+  json=$(printf '%s' "$json" | jq --arg repo "$REPO_URL" --arg base "$base" '. + {
     sameRepo:     ((.url | ascii_downcase) | startswith(($repo + "/pull/") | ascii_downcase)),
     isDeployment: any(.labels[]; .name == "type: deployment"),
     baseRefOid:   $base
@@ -54,20 +55,20 @@ cmd_pr() {
 }
 
 cmd_issue() {
-  local host=$1 repo_url=$2 number=$3 dir=$4
-  HOST=$host
+  local number=$1 dir=$2
   [[ $number =~ ^[0-9]+$ ]] || usage
-  run_gh "issue #$number" issue view "$number" --repo "$repo_url" --json number,title,state,body,labels
+  load_preflight "$dir"
+  run_gh "issue #$number" issue view "$number" --repo "$REPO_URL" --json number,title,state,body,labels
   write_file "$dir" "issue-$number.json" "$OUT"
   printf '%s' "$OUT" | jq -r '"#\(.number) \(.title) (\(.state))"'
   return $?
 }
 
 cmd_alert() {
-  local host=$1 repo_path=$2 number=$3 dir=$4 result
-  HOST=$host
+  local number=$1 dir=$2 result
   [[ $number =~ ^[0-9]+$ ]] || usage
-  run_gh "alert #$number" api --hostname "$host" "repos/$repo_path/code-scanning/alerts/$number"
+  load_preflight "$dir"
+  run_gh "alert #$number" api --hostname "$HOST" "repos/$REPO_PATH/code-scanning/alerts/$number"
   # -e with select: anything that is not an alert object with a numeric number gives no output, so the die below fires
   result=$(printf '%s' "$OUT" | jq -e 'select(type == "object" and (.number | type) == "number") | {
     number, state, url: .html_url,
@@ -95,12 +96,12 @@ cmd_ci() {
 }
 
 cmd_feedback() {
-  local host=$1 repo_path=$2 number=$3 dir=$4 inline result
-  HOST=$host
+  local number=$1 dir=$2 inline result
   [[ $number =~ ^[0-9]+$ ]] || usage
+  load_preflight "$dir"
   require_pr_json "$dir" "prior feedback"
   # one JSON array per page; slurping joins them
-  run_gh "inline comments of PR #$number" api --paginate --hostname "$host" "repos/$repo_path/pulls/$number/comments"
+  run_gh "inline comments of PR #$number" api --paginate --hostname "$HOST" "repos/$REPO_PATH/pulls/$number/comments"
   inline=$(printf '%s' "$OUT" | jq -s 'add // []') || die "inline comments of PR #$number" "Cannot read the inline comments returned by gh."
   result=$(jq --argjson inline "$inline" '{
     discussion: {
@@ -117,11 +118,11 @@ main() {
   local cmd=${1:-}
   [[ $# -gt 0 ]] && shift
   case $cmd in
-    pr) [[ $# -eq 4 ]] || usage; cmd_pr "$@" ;;
-    issue) [[ $# -eq 4 ]] || usage; cmd_issue "$@" ;;
-    alert) [[ $# -eq 4 ]] || usage; cmd_alert "$@" ;;
+    pr) [[ $# -eq 2 ]] || usage; cmd_pr "$@" ;;
+    issue) [[ $# -eq 2 ]] || usage; cmd_issue "$@" ;;
+    alert) [[ $# -eq 2 ]] || usage; cmd_alert "$@" ;;
     ci) [[ $# -eq 1 ]] || usage; cmd_ci "$@" ;;
-    feedback) [[ $# -eq 4 ]] || usage; cmd_feedback "$@" ;;
+    feedback) [[ $# -eq 2 ]] || usage; cmd_feedback "$@" ;;
     *) usage ;;
   esac
   return $?
