@@ -2,6 +2,7 @@
 # The sourcing script sets SCRIPT and SUBCOMMANDS (for the usage message) and may set VERB (default "read", "create" for writes).
 # On failure: nothing on stdout, one JSON line on stderr {error, exit, retryable, what, message}
 # and a fixed exit code: 10 auth, 11 not_found, 12 rate_limited, 13 network, 1 other, 2 usage.
+# Everything the scripts write lives under TEMP_BASE ($TMPDIR/dotclaude-dev) and is never deleted by them: the folders have unique names, and cleaning the temporary folder is left to the OS.
 # SKILL (set by load_preflight, or by the script itself) names the skill in the "then re-run" hint of the messages; empty keeps the plain "re-run".
 # shortcut: the cause is matched from the text of gh's error output, replace by a structured status if gh offers one.
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
@@ -15,8 +16,8 @@ REPO_URL=""
 REPO_PATH=""
 
 command -v jq > /dev/null 2>&1 || { echo "${SCRIPT:-contract.sh}: jq is required" >&2; exit 1; }
-ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/dotclaude-gh-XXXXXX") || exit 1
-trap 'rm -f "$ERR_FILE"' EXIT
+TEMP_BASE="${TMPDIR:-/tmp}/dotclaude-dev"
+ERR_FILE=""
 
 # emit_error <error> <exit-code> <retryable> <what> <message>
 emit_error() {
@@ -131,3 +132,14 @@ set_range() {
   RANGE="$remote/$base...HEAD"
   return 0
 }
+
+# setup_scratch: creates TEMP_BASE and the file ERR_FILE for the stderr of gh and git calls; runs once when the file is sourced
+setup_scratch() {
+  local reason
+  reason=$(mkdir -p -m 700 "$TEMP_BASE" 2>&1) ||
+    die "temporary folder" "Cannot create the temporary folder $TEMP_BASE: $(printf '%s' "$reason" | head -n 1). Make its parent writable for your user or set TMPDIR to another folder, then $(rerun)."
+  ERR_FILE=$(mktemp "$TEMP_BASE/stderr-XXXXXX" 2> /dev/null) ||
+    die "temporary folder" "Cannot create a file in the temporary folder $TEMP_BASE. Make it writable for your user or set TMPDIR to another folder, then $(rerun)."
+  return 0
+}
+setup_scratch

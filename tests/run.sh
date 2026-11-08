@@ -9,6 +9,8 @@ script="$root/plugins/dotclaude-dev/scripts/pr-data.sh"
 fixtures="$root/tests/fixtures"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/dotclaude-tests-XXXXXX") || exit 1
 trap 'rm -rf "$tmp"' EXIT
+# the scripts write under $TMPDIR/dotclaude-dev and never delete it: the tests keep that inside their own folder
+export TMPDIR="$tmp"
 passed=0
 failed=0
 SEED_PR_JSON=""
@@ -1048,6 +1050,18 @@ pf_run() {
   return 0
 }
 
+# expect_no_pr_folder <name> <tmp-dir>: no create-pr-* or review-pr-* folder was made (the scripts' scratch files in dotclaude-dev are fine)
+expect_no_pr_folder() {
+  local name=$1 work_dir=$2 found
+  found=$(ls "$work_dir/dotclaude-dev" 2> /dev/null | grep -E '^(create-pr|review-pr)-' || true)
+  if [[ -z $found ]]; then
+    report "$name" ok
+  else
+    report "$name" fail "folders: $found"
+  fi
+  return 0
+}
+
 pf_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
 stub=$(pf_stub)
 pf_run "$stub" "$pf_tmp" create-pr origin
@@ -1074,32 +1088,32 @@ pf_case_tmp=$(mktemp -d "$tmp/pf-case-XXXXXX")
 PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr origin
 expect_error "preflight/outside a repository" 1 other false
 expect_error_message "preflight/outside a repository, hint names the skill" '`/create-pr`'
-expect_empty "preflight/outside a repository leaves no folder" "$pf_case_tmp"
+expect_no_pr_folder "preflight/outside a repository makes no folder" "$pf_case_tmp"
 
 pf_run "$stub" "$pf_case_tmp" create-pr nowhere
 expect_error "preflight/unknown remote" 1 other false
 expect_error_message "preflight/unknown remote, message" "No remote named nowhere"
-expect_empty "preflight/unknown remote leaves no folder" "$pf_case_tmp"
+expect_no_pr_folder "preflight/unknown remote makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 fail_stub "$stub" api 4 "authentication required"
 pf_run "$stub" "$pf_case_tmp" review-pr origin
 expect_error "preflight/auth failure" 10 auth false
 expect_error_message "preflight/auth failure, hint names the skill" '`/review-pr`'
-expect_empty "preflight/auth failure leaves no folder" "$pf_case_tmp"
+expect_no_pr_folder "preflight/auth failure makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository with the name 'o/r'."
 pf_run "$stub" "$pf_case_tmp" create-pr origin
 expect_error "preflight/repository not found" 11 not_found false
-expect_empty "preflight/repository not found leaves no folder" "$pf_case_tmp"
+expect_no_pr_folder "preflight/repository not found makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":null}' > "$stub/repo-view.out"
 pf_run "$stub" "$pf_case_tmp" create-pr origin
 expect_error "preflight/repository without a default branch" 1 other false
 expect_error_message "preflight/repository without a default branch, message" "no default branch"
-expect_empty "preflight/repository without a default branch leaves no folder" "$pf_case_tmp"
+expect_no_pr_folder "preflight/repository without a default branch makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 pf_blocked=$(mktemp -d "$tmp/pf-blocked-XXXXXX")
@@ -1114,7 +1128,7 @@ pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error "preflight/usage: one argument" 2 usage false
 pf_run "$stub" "$pf_case_tmp" create-pr origin extra
 expect_error "preflight/usage: three arguments" 2 usage false
-expect_empty "preflight/usage errors leave no folder" "$pf_case_tmp"
+expect_no_pr_folder "preflight/usage errors make no folder" "$pf_case_tmp"
 
 # ---- contract.sh: require_repo, load_preflight, the skill hint ----
 

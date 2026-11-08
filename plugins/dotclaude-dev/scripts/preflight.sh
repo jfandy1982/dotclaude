@@ -16,13 +16,9 @@ SUBCOMMANDS='<skill> <remote>'
 # shellcheck source=contract.sh
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
-# a folder created by this run is removed on exit unless the run finished; removed together with the contract's own scratch file
-CLEANUP_DIR=""
-trap 'rm -f "$ERR_FILE"; [[ -z $CLEANUP_DIR ]] || rm -rf "$CLEANUP_DIR"' EXIT
-
 main() {
   [[ $# -eq 2 ]] || usage
-  local skill=$1 remote=$2 base dir info remote_url host username repo default_branch json
+  local skill=$1 remote=$2 dir info remote_url host username repo default_branch json
   [[ $skill == create-pr || $skill == review-pr ]] || usage
   SKILL=$skill
   require_repo
@@ -37,18 +33,13 @@ main() {
   default_branch=$(printf '%s' "$repo" | jq -r '.defaultBranchRef.name // empty') ||
     die "repository $remote_url" "Cannot read the repository returned by gh."
   [[ -n $default_branch ]] || die "repository $remote_url" "The repository has no default branch."
-  base="${TMPDIR:-/tmp}/dotclaude-dev"
-  mkdir -p -m 700 "$base" 2> "$ERR_FILE" ||
-    die "temporary folder" "Cannot create the temporary folder $base: $(head -n 1 "$ERR_FILE"). Make its parent writable for your user or set TMPDIR to another folder, then $(rerun)."
-  dir=$(mktemp -d "$base/$skill-XXXXXX" 2> "$ERR_FILE") ||
-    die "temporary folder" "Cannot create a temporary folder in $base: $(head -n 1 "$ERR_FILE"). Make it writable for your user or set TMPDIR to another folder, then $(rerun)."
-  CLEANUP_DIR=$dir
+  dir=$(mktemp -d "$TEMP_BASE/$skill-XXXXXX" 2> "$ERR_FILE") ||
+    die "temporary folder" "Cannot create a temporary folder in $TEMP_BASE: $(head -n 1 "$ERR_FILE"). Make it writable for your user or set TMPDIR to another folder, then $(rerun)."
   json=$(printf '%s' "$repo" | jq -c --arg skill "$skill" --arg remote "$remote" --arg remoteUrl "$remote_url" --arg host "$host" \
     --arg username "$username" --arg prDir "$dir" --arg defaultBranch "$default_branch" \
     '{skill: $skill, remote: $remote, remoteUrl: $remoteUrl, host: $host, username: $username, repoUrl: .url, repoPath: .nameWithOwner, defaultBranch: $defaultBranch, prDir: $prDir}') ||
     die "repository $remote_url" "Cannot read the repository returned by gh."
   write_file "$dir" preflight.json "$json"
-  CLEANUP_DIR=""
   printf '%s\n' "$json"
   return 0
 }

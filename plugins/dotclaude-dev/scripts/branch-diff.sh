@@ -3,7 +3,8 @@
 #   branch-diff.sh files <remote> <default-branch> <pr-dir>
 #       writes <pr-dir>/diff/NNN.diff for every file that gets a diff (NNN = 001, 002, ... in git's file order) and prints
 #       a one-line JSON array [{path, renamedFrom, added, removed, generated, diff}]:
-#       added/removed are null for binary files, diff is the path of the diff file or null
+#       added/removed are null for binary files, diff is the path of the diff file or null;
+#       also leaves <pr-dir>/changed-files.list (git's NUL-separated numstat, read back by the script itself)
 #   branch-diff.sh file <remote> <default-branch> <path> [<old-path>]
 #       prints the diff of one path (nothing when the path did not change); pass renamedFrom as <old-path> for a renamed file
 # Errors follow the contract in contract.sh (no gh call is made here).
@@ -15,9 +16,6 @@ SUBCOMMANDS='files|file'
 # shellcheck source=contract.sh
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
-# the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file; removed on exit with the contract's own scratch file
-LISTING=$(mktemp "${TMPDIR:-/tmp}/dotclaude-list-XXXXXX") || exit 1
-trap 'rm -f "$ERR_FILE" "$LISTING"' EXIT
 # Lockfiles that are generated unless .gitattributes says otherwise; other lockfiles: mark them linguist-generated in the repository
 LOCKFILES="package-lock.json yarn.lock pnpm-lock.yaml"
 
@@ -57,6 +55,8 @@ cmd_files() {
   set_range "$remote" "$base"
   mkdir -p "$dir/diff" || die "diff folder" "Cannot create $dir/diff."
   top=$(run_git "repository root" rev-parse --show-toplevel) || exit $?
+  # the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file in the folder
+  LISTING="$dir/changed-files.list"
   run_git "changed files of $RANGE" diff "$RANGE" --numstat -z -M > "$LISTING"
   while IFS= read -r -d '' tok; do
     added=${tok%%$'\t'*}
