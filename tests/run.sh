@@ -1294,5 +1294,21 @@ else
   report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing or an old setup call or host variable is left"
 fi
 
+review_skill="$root/plugins/dotclaude-dev/skills/review-pr/SKILL.md"
+if grep -qF 'scripts/preflight.sh" review-pr origin' "$review_skill" && ! grep -qE 'remote-host\.sh|gh api user|gh repo view|<host>|<repo-path>|<origin-url>' "$review_skill"; then
+  report "skills/review-pr Preconditions use preflight.sh" ok
+else
+  report "skills/review-pr Preconditions use preflight.sh" fail "preflight call missing or an old setup call or host variable is left"
+fi
+
+# the script calls pass only what the scripts cannot read from preflight.json
+if grep -qF 'scripts/pr-data.sh" pr <pr-arg> <pr-dir>' "$review_skill" &&
+  grep -qF 'scripts/pr-data.sh" issue <issue-number> <pr-dir>' "$review_skill" &&
+  grep -qF 'scripts/pr-data.sh" feedback <pr.number> <pr-dir>' "$review_skill"; then
+  report "skills/review-pr script calls use the short signatures" ok
+else
+  report "skills/review-pr script calls use the short signatures" fail "a pr-data.sh call does not match the short signature"
+fi
+
 echo "$passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]

@@ -17,91 +17,45 @@ Run in order. Stop on first failure. Do not output anything while running precon
 
 Take the PR reference (first argument) and the optional review scope (second argument) from the invocation. If the PR reference is missing, ask: "PR number or URL to review?"
 
-Store the first argument exactly as given as `<pr-arg>`. Do not parse it: Precondition 6 passes it to `gh pr view`, which resolves PR numbers and PR URLs itself.
+Store the first argument exactly as given as `<pr-arg>`. Do not parse it: Precondition 3 passes it to `gh pr view`, which resolves PR numbers and PR URLs itself.
 
 Store the second argument, if any, as `<scope-arg>`. It is interpreted later, not here.
 
-**Precondition 2 — Git repository**
+**Precondition 2 — Preflight**
+
+One script checks that this is a git repository, cuts the host out of the URL of `origin`, confirms the login on that host, reads the repository behind `origin` and creates a temporary folder. What is collected for the PR is saved in that folder, so later steps can read parts of it with `jq` instead of carrying all of it in the conversation.
 
 ```bash
-git rev-parse --is-inside-work-tree 2>/dev/null
-```
-
-Output other than exactly `true` → stop.
-
-> "Not inside a git repository. Run `/review-pr` from a clone of the target repo."
-
-**Precondition 3 — Origin host**
-
-Only the host is needed before the auth check. The script cuts it out of the URL of `origin` offline, for every remote URL form, and prints two lines: the URL and the host.
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" origin
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" review-pr origin
 ```
 
 Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
 
-Store the first printed line as `<origin-url>` and the second as `<host>`.
+The script prints one JSON line. Store `username` as `<username>`, `repoUrl` as `<repo-url>` (the canonical repository URL, also when `origin` still uses an old name of a renamed repository) and `prDir` as `<pr-dir>`. Host and repository path stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
 
-**Precondition 4 — Confirm auth**
+The folder holds `preflight.json`, `pr.json` (the PR with its CI status, comments and reviews), `body.txt` (the PR body), and later steps add `issue-<number>.json` and `feedback.json`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again, and a resumed review restores the worktree, not the collected data.
 
-```bash
-gh api user --hostname <host> --jq '.login'
-```
+**Precondition 3 — Fetch the PR**
 
-Non-zero exit → stop:
-
-> "Not authenticated with `<host>`. Run `gh auth login --hostname <host>` then re-run `/review-pr`."
-
-Store the printed login as `<username>`.
-
-**Precondition 5 — Origin repository**
+Fetch the PR in one call. The script writes `pr.json` and `body.txt` and prints everything but the bulky fields (body, files, comments, reviews, CI status):
 
 ```bash
-gh repo view <origin-url> --json url,nameWithOwner --jq '.url, .nameWithOwner'
-```
-
-Non-zero exit → stop:
-
-> "`origin` `<origin-url>` is not a GitHub repository on `<host>`, or you lack access to it."
-
-Store the first printed line as `<repo-url>` and the second as `<repo-path>` (`<owner>/<repo>`). `<repo-url>` is the canonical `https://<host>/<repo-path>`, also when `origin` still uses an old name of a renamed repository.
-
-**Precondition 6 — Fetch the PR**
-
-What is collected for the PR is saved in a temporary folder, so later steps can read parts of it with `jq` instead of carrying all of it in the conversation. First create the folder:
-
-```bash
-d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp -d "$d/review-pr-XXXXXX"
-```
-
-Non-zero exit → stop:
-
-> "Cannot create a temporary folder for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/review-pr`."
-
-Store the printed path as `<pr-dir>`. Do not delete it.
-
-The folder holds `pr.json` (the PR with its CI status, comments and reviews), `body.txt` (the PR body), and later steps add `issue-<number>.json` and `feedback.json`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again, and a resumed review restores the worktree, not the collected data.
-
-Then fetch the PR in one call. The script writes `pr.json` and `body.txt` and prints everything but the bulky fields (body, files, comments, reviews, CI status):
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" pr <host> <repo-url> <pr-arg> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" pr <pr-arg> <pr-dir>
 ```
 
 `pr.json` keeps every fetched field and adds the base commit `baseRefOid` and the computed checks `sameRepo` and `isDeployment`, so later steps read them instead of judging the raw values. `headRefOid` and `baseRefOid` are the commits the review is based on. The body gets its own file, because the body parser reads text, not JSON.
 
-Non-zero exit → stop, as described in Precondition 3.
+Non-zero exit → stop, as described in Precondition 2.
 
 Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-dir>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-dir>/pr.json` when needed. The body is in `<pr-dir>/body.txt`.
 
-**Precondition 7 — PR belongs to origin**
+**Precondition 4 — PR belongs to origin**
 
 A PR URL makes `gh pr view` fetch from the repository in that URL, ignoring `--repo`. `<pr.sameRepo>` is not `true` → stop:
 
 > "PR `<pr.url>` is not in this repo's `origin` `<repo-url>`. Run `/review-pr` from a clone of the target repo instead."
 
-**Precondition 8 — PR is open and ready for review**
+**Precondition 5 — PR is open and ready for review**
 
 `<pr.state>` is not `OPEN` → stop:
 
@@ -111,7 +65,7 @@ A PR URL makes `gh pr view` fetch from the repository in that URL, ignoring `--r
 
 > "PR `<pr.number>` is still a draft — mark it ready for review, then re-run `/review-pr`."
 
-**Precondition 9 — PR is not from a fork**
+**Precondition 6 — PR is not from a fork**
 
 `<pr.isCrossRepository>` is `true` → stop:
 
@@ -119,7 +73,7 @@ A PR URL makes `gh pr view` fetch from the repository in that URL, ignoring `--r
 
 ## Content gates
 
-Checked in order, after all preconditions have passed. They look at the content of the PR, not at the environment, using `<pr>` and `<pr-dir>/body.txt` from Precondition 6.
+Checked in order, after all preconditions have passed. They look at the content of the PR, not at the environment, using `<pr>` and `<pr-dir>/body.txt` from Precondition 3.
 
 **Gate 1 — Reviewer is the author (warning only)**
 
@@ -135,7 +89,7 @@ This gate never stops the skill. When `<pr.author.login>` equals `<username>` (i
 
 **Gate 3 — File risk section**
 
-Reads the sections `create-pr` writes into the PR body. The format is defined in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`.
+Reads the sections `create-pr` writes into the PR body. The script knows the format; `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md` documents it for maintainers, so do not read that file for this.
 
 ```bash
 jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-dir>/body.txt
@@ -169,7 +123,7 @@ Then print each warning that applies, as its own line:
 `<context.closes.numbers>` is empty → nothing to read, and no warning. Otherwise read every issue into its own file, one command per number (they are independent, so they may run in parallel). The script writes `issue-<issue-number>.json` and prints one line:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <issue-number> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <issue-number> <pr-dir>
 ```
 
 Non-zero exit for an issue → print "Warning: " and the `message`, and go on without it. Store the printed lines as `<linked-issues>`, one line per issue. The details stay in `<pr-dir>`.
@@ -191,7 +145,7 @@ Everything already said on the PR, by anyone: comments, review summaries and inl
 Comments and reviews were fetched with the PR. The script adds all pages of the inline comments, writes `feedback.json` and prints the counts:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" feedback <host> <repo-path> <pr.number> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" feedback <pr.number> <pr-dir>
 ```
 
 Non-zero exit → print "Warning: " and the `message`, followed by "Findings are not checked against the existing comments.". The script writes no file then. Otherwise store the printed counts as `<prior-feedback>`. The comments themselves stay in `<pr-dir>/feedback.json`, which can be long.
@@ -230,13 +184,13 @@ Non-zero exit → stop:
 
 > "Could not fetch the head of PR `<pr.number>` from `origin`."
 
-The review runs on `<pr.headRefOid>`, the commit `<pr>` describes, even if the PR got new commits since Precondition 6. That commit only has to exist locally:
+The review runs on `<pr.headRefOid>`, the commit `<pr>` describes, even if the PR got new commits since Precondition 3. That commit only has to exist locally:
 
 ```bash
 git cat-file -t <pr.headRefOid> 2>/dev/null
 ```
 
-Output other than exactly `commit` → the PR was force-pushed after Precondition 6 → stop:
+Output other than exactly `commit` → the PR was force-pushed after Precondition 3 → stop:
 
 > "PR `<pr.number>` was force-pushed while review-pr was starting. Re-run `/review-pr`."
 
