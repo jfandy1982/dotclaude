@@ -1023,6 +1023,99 @@ LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$rg_di
 expect_error "run_git/branch-diff files: outside a repository" 1 other false
 expect_error_message "run_git/branch-diff files: outside a repository, git's reason" "not a git repository"
 
+# ---- preflight.sh ----
+
+preflight_script="$root/plugins/dotclaude-dev/scripts/preflight.sh"
+pf_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
+git -C "$pf_repo" init -q
+git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
+
+# pf_stub: the fake gh answers the login and the repository
+pf_stub() {
+  local dir
+  dir=$(new_stub)
+  echo reviewer1 > "$dir/api.out"
+  echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":{"name":"main"}}' > "$dir/repo-view.out"
+  printf '%s\n' "$dir"
+  return 0
+}
+
+# pf_run <stub-dir> <tmp-dir> <arguments...>: runs preflight.sh in the repository with the fake gh and its own TMPDIR
+pf_run() {
+  local stub=$1 work_dir=$2
+  shift 2
+  STUB_GH_DIR="$stub" TMPDIR="$work_dir" PLAIN_DIR="$pf_repo" run_plain "$preflight_script" "$@"
+  return 0
+}
+
+pf_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
+stub=$(pf_stub)
+pf_run "$stub" "$pf_tmp" create-pr origin
+pf_dir=$(jq -r '.prDir' "$tmp/data.out")
+if [[ $DATA_CODE -eq 0 ]] && jq -e --arg dir "$pf_dir" '. == {skill: "create-pr", remote: "origin", remoteUrl: "https://github.example.local/o/r.git", host: "github.example.local", username: "reviewer1", repoUrl: "https://github.example.local/o/r", repoPath: "o/r", defaultBranch: "main", prDir: $dir}' "$tmp/data.out" > /dev/null; then
+  report "preflight/create-pr: the printed JSON" ok
+else
+  report "preflight/create-pr: the printed JSON" fail "exit $DATA_CODE: $(cat "$tmp/data.out") $(cat "$tmp/data.err")"
+fi
+check "preflight/create-pr: preflight.json holds the printed JSON" "$pf_dir/preflight.json" "$tmp/data.out"
+[[ $pf_dir == "$pf_tmp"/dotclaude-dev/create-pr-* ]] &&
+  report "preflight/create-pr: folder under TMPDIR, named after the skill" ok ||
+  report "preflight/create-pr: folder under TMPDIR, named after the skill" fail "$pf_dir"
+expect_call "preflight/create-pr: login is read on the host of the remote" "$stub" "api user --hostname github.example.local"
+expect_call "preflight/create-pr: the repository is read from the remote URL" "$stub" "repo view https://github.example.local/o/r.git"
+
+pf_run "$stub" "$pf_tmp" review-pr origin
+jq -e '.skill == "review-pr" and (.prDir | test("/review-pr-[A-Za-z0-9]+$"))' "$tmp/data.out" > /dev/null &&
+  report "preflight/review-pr: folder prefix and skill" ok ||
+  report "preflight/review-pr: folder prefix and skill" fail "$(cat "$tmp/data.out") $(cat "$tmp/data.err")"
+
+# every failure leaves no folder behind and names the skill in the hint
+pf_case_tmp=$(mktemp -d "$tmp/pf-case-XXXXXX")
+PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr origin
+expect_error "preflight/outside a repository" 1 other false
+expect_error_message "preflight/outside a repository, hint names the skill" '`/create-pr`'
+expect_empty "preflight/outside a repository leaves no folder" "$pf_case_tmp"
+
+pf_run "$stub" "$pf_case_tmp" create-pr nowhere
+expect_error "preflight/unknown remote" 1 other false
+expect_error_message "preflight/unknown remote, message" "No remote named nowhere"
+expect_empty "preflight/unknown remote leaves no folder" "$pf_case_tmp"
+
+stub=$(pf_stub)
+fail_stub "$stub" api 4 "authentication required"
+pf_run "$stub" "$pf_case_tmp" review-pr origin
+expect_error "preflight/auth failure" 10 auth false
+expect_error_message "preflight/auth failure, hint names the skill" '`/review-pr`'
+expect_empty "preflight/auth failure leaves no folder" "$pf_case_tmp"
+
+stub=$(pf_stub)
+fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository with the name 'o/r'."
+pf_run "$stub" "$pf_case_tmp" create-pr origin
+expect_error "preflight/repository not found" 11 not_found false
+expect_empty "preflight/repository not found leaves no folder" "$pf_case_tmp"
+
+stub=$(pf_stub)
+echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":null}' > "$stub/repo-view.out"
+pf_run "$stub" "$pf_case_tmp" create-pr origin
+expect_error "preflight/repository without a default branch" 1 other false
+expect_error_message "preflight/repository without a default branch, message" "no default branch"
+expect_empty "preflight/repository without a default branch leaves no folder" "$pf_case_tmp"
+
+stub=$(pf_stub)
+pf_blocked=$(mktemp -d "$tmp/pf-blocked-XXXXXX")
+: > "$pf_blocked/dotclaude-dev"
+pf_run "$stub" "$pf_blocked" create-pr origin
+expect_error "preflight/temporary folder cannot be created" 1 other false
+expect_error_message "preflight/temporary folder cannot be created, message" "temporary folder"
+
+pf_run "$stub" "$pf_case_tmp" other-skill origin
+expect_error "preflight/usage: unknown skill" 2 usage false
+pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error "preflight/usage: one argument" 2 usage false
+pf_run "$stub" "$pf_case_tmp" create-pr origin extra
+expect_error "preflight/usage: three arguments" 2 usage false
+expect_empty "preflight/usage errors leave no folder" "$pf_case_tmp"
+
 # ---- contract.sh: require_repo, load_preflight, the skill hint ----
 
 # contract-call.sh <function> <arguments...>: calls one function of contract.sh, then prints HOST, REPO_URL, REPO_PATH and SKILL; TEST_SKILL pre-sets SKILL
@@ -1057,9 +1150,9 @@ EOT
 run_plain "$tmp/contract-call.sh" load_preflight "$lp_dir"
 expect_text "load_preflight/sets host, repo URL, repo path and skill" "$tmp/data.out" "github.example.local|https://github.example.local/o/r|o/r|review-pr"
 
-lp_bare=$(mktemp -d "$tmp/preflight-XXXXXX")
-echo '{"host":"h","repoUrl":"u","repoPath":"o/r"}' > "$lp_bare/preflight.json"
-run_plain "$tmp/contract-call.sh" load_preflight "$lp_bare"
+lp_no_skill_field=$(mktemp -d "$tmp/preflight-XXXXXX")
+echo '{"host":"h","repoUrl":"u","repoPath":"o/r"}' > "$lp_no_skill_field/preflight.json"
+run_plain "$tmp/contract-call.sh" load_preflight "$lp_no_skill_field"
 expect_text "load_preflight/a file without skill leaves it empty" "$tmp/data.out" "h|u|o/r|"
 
 lp_missing=$(mktemp -d "$tmp/preflight-XXXXXX")
