@@ -3,6 +3,7 @@ name: create-pr
 description: Use when creating a pull request for the current branch, which is already committed and pushed.
 disable-model-invocation: true
 compatibility: Requires git, gh CLI, jq and internet access to GitHub
+argument-hint: '[--issue numbers-or-na] [--alert numbers-or-na]'
 ---
 
 # create-pr
@@ -11,7 +12,17 @@ compatibility: Requires git, gh CLI, jq and internet access to GitHub
 
 Run in order. Stop on first failure. Do not output anything while running preconditions — no announcements, no progress, no status, no results for passing checks. When a precondition fails, output only the stop message verbatim, with no prefix, no summary, and no additional explanation.
 
-**Precondition 1 — Remote tracking branch**
+**Precondition 1 — Parse arguments**
+
+Both options are optional and may come in any order: `--issue <numbers>` and `--alert <numbers>`. The value of an option is everything after it up to the next `--` token or the end of the invocation, joined as typed (`--issue 38, 42` and `--issue 38,42` are the same). An option given twice is merged: join its values with a comma.
+
+Store the value of `--issue` as `<issue-arg>` and the value of `--alert` as `<alert-arg>`; an option that was not given leaves its variable unset. Do not interpret the values here: Steps 2 and 3 check them like a typed answer.
+
+Anything else (a token that is neither `--issue`, `--alert` nor part of a value, or an option without a value) → stop:
+
+> "Usage: `/create-pr [--issue <numbers>] [--alert <numbers>]` — numbers comma-separated, or N/A."
+
+**Precondition 2 — Remote tracking branch**
 
 ```bash
 git branch --show-current
@@ -30,7 +41,7 @@ If no output from the second command → stop:
 
 Extract the remote name from the output (e.g. `origin/feat/foo` → remote is `origin`). Store as `<remote>`.
 
-**Precondition 2 — Local branch up to date with remote**
+**Precondition 3 — Local branch up to date with remote**
 
 ```bash
 git fetch <remote>
@@ -52,7 +63,7 @@ The output is `<behind>` and `<ahead>`, separated by a tab. `<behind>` above 0 �
 
 > "Local branch has commits that are not on `<remote>` yet — push first (`git push`) then re-run `/create-pr`."
 
-**Precondition 3 — Preflight**
+**Precondition 4 — Preflight**
 
 One script checks that this is a git repository, cuts the host out of the URL of `<remote>`, confirms the login on that host, reads the repository behind the remote URL and creates a temporary folder. What is collected for the PR is saved in that folder, so later steps can read parts of it instead of carrying all of it in the conversation.
 
@@ -66,7 +77,7 @@ The script prints one JSON line. Store `defaultBranch` as `<default-branch>` and
 
 The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
-**Precondition 4 — Default-branch guard**
+**Precondition 5 — Default-branch guard**
 
 If `<branch>` == `<default-branch>` → stop:
 
@@ -96,7 +107,7 @@ git log <remote>/<default-branch>..HEAD
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" files <remote> <default-branch> <pr-dir>
 ```
 
-Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); the script diffs against the merge-base, so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
+Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 3 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); the script diffs against the merge-base, so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
 
 The script prints a JSON table with one entry per changed file. Store it as `<file-table>` and do not run the script again; after a failed run do not read any file in `<pr-dir>/diff/`.
 
@@ -105,7 +116,7 @@ The script prints a JSON table with one entry per changed file. Store it as `<fi
 - `diff` is `null` and `generated` is false → a pure rename: only listed, nothing to read.
 - `generated` is true (a lockfile, or marked `linguist-generated` in `.gitattributes`) → numbers only. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" file <remote> <default-branch> <path> [<renamedFrom>]` only when a step needs the file's content (which package, major bump); pass `renamedFrom` when it is not `null`. Empty output means the path is not part of this PR: re-check the path in `<file-table>`.
 
-Read `<branch>` (from Precondition 1), the commit messages, `<file-table>`, and the diffs together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
+Read `<branch>` (from Precondition 2), the commit messages, `<file-table>`, and the diffs together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
 
 **Checklist.** The script reads only the repository root `CLAUDE.md` and asks git which checklist rows match the changed files:
 
@@ -123,27 +134,33 @@ The script's answer is final: do not read `CLAUDE.md` or match patterns yourself
 
 ### Step 2 — Issue linking
 
-Ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Issues must be in this repository."
+If `<issue-arg>` is set, use it as the author's answer and do not ask. Otherwise ask the author for issue numbers via a plain text prompt: "Issue number(s) this PR closes? (comma-separated, e.g. 38, 42 — or N/A) Issues must be in this repository."
 
-Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
+`N/A` in any case (`n/a`, `N/a`) means none. Otherwise split the answer at commas, trim spaces and check that every number is digits only, otherwise ask the author again via the plain text prompt, also when the answer came from `<issue-arg>`. Then clean the list with one command, which strips leading zeros, drops empty items and sorts ascending without duplicates (an empty result counts as invalid, so ask again), and use its output from here on:
+
+```bash
+printf '%s\n' <numbers> | sed -e 's/^0*//' -e '/./!d' | sort -nu
+```
+
+For each number, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
-- Any other non-zero exit → stop, as described in Precondition 3.
+- Any other non-zero exit → stop, as described in Precondition 4.
 - State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `OPEN` → keep it.
 
-If `N/A`, skip the confirmation below and continue with `<closes>` and `<issue-context>` empty.
+If the answer is `N/A`, skip the confirmation below and continue with `<closes>` and `<issue-context>` empty.
 
 Otherwise, ask with `AskUserQuestion` to show a confirmation listing each issue number with its fetched title:
 
 - Question: "Confirm linked issues:"
 - Options:
   - "Use these issues" (Recommended) — preview: each issue number with its fetched title
-  - "Edit" — author revises the issue number list via a follow-up plain text prompt; run the command for each new number and apply the checks above
+  - "Edit" — author revises the issue number list via a follow-up plain text prompt; check and clean the new list as above, run the command for each new number and apply the checks above
 
 Format as individual `Closes #N` lines.
 
@@ -151,27 +168,27 @@ Store the result as `<closes>`. Read the file `<pr-dir>/issue-<N>.json` of every
 
 ### Step 3 — CodeQL alert linking
 
-Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert number(s) this PR fixes? (comma-separated, e.g. 3, 5 — or N/A) Alerts must be in this repository."
+If `<alert-arg>` is set, use it as the author's answer and do not ask. Otherwise ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert number(s) this PR fixes? (comma-separated, e.g. 3, 5 — or N/A) Alerts must be in this repository."
 
-Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `alert-<N>.json` into `<pr-dir>` and prints one line, `#<N> <ruleId> (<state>)`:
+Check and clean the answer exactly as in Step 2 (`N/A` in any case means none; otherwise digits only, ask again if not, also for `<alert-arg>`, then the cleaning command). For each number, run one command (they are independent, so they may run in parallel). The script writes `alert-<N>.json` into `<pr-dir>` and prints one line, `#<N> <ruleId> (<state>)`:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
-- Any other non-zero exit → stop, as described in Precondition 3.
+- Any other non-zero exit → stop, as described in Precondition 4.
 - State other than `open` (`fixed`, `dismissed`) → ask with `AskUserQuestion` ("Alert #N is already <state> — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `open` → keep it.
 
-If `N/A`, skip the confirmation below and continue with `<codeql-context>` empty.
+If the answer is `N/A`, skip the confirmation below and continue with `<codeql-context>` empty.
 
 Otherwise, ask with `AskUserQuestion` to show a confirmation listing each alert number with its `ruleId`:
 
 - Question: "Confirm linked CodeQL alerts:"
 - Options:
   - "Use these alerts" (Recommended) — preview: each alert number with its `ruleId`
-  - "Edit" — author revises the alert number list via a follow-up plain text prompt; run the command for each new number and apply the checks above
+  - "Edit" — author revises the alert number list via a follow-up plain text prompt; check and clean the new list as above, run the command for each new number and apply the checks above
 
 Read the file `<pr-dir>/alert-<N>.json` of every kept alert once and keep its `state`, `url`, `ruleId`, `ruleDescription`, `severity`, `message` and `path` as `<codeql-context>`. Subsequent steps (file risk, label inference, PR title, body) use `<codeql-context>` as additional signal alongside `<issue-context>` and the branch context from Step 1. `<codeql-context>` is commonly empty; this is not itself a warning.
 
