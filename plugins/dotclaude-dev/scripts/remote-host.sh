@@ -5,14 +5,14 @@
 #   remote-host.sh --url <url>
 #       prints the host of the URL
 # Understands https://, http://, git@host:path, ssh://git@host:port/path and user@ in an https URL.
-# Errors follow the contract in gh-contract.sh; a remote that does not exist is "other", not "not_found" (11 means GitHub said so).
+# Errors follow the contract in contract.sh; a remote that does not exist is "other", not "not_found" (11 means GitHub said so).
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 set -u -o pipefail
 
 SCRIPT="remote-host.sh"
 SUBCOMMANDS='<remote>|--url'
-# shellcheck source=gh-contract.sh
-source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
+# shellcheck source=contract.sh
+source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 # host_of <url>: prints the host, nothing when there is none
 host_of() {

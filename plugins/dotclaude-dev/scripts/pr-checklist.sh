@@ -30,14 +30,14 @@
 # silent non-match. Changed means added, changed or deleted; renames are not followed, so a file moved out of a folder
 # matches through its old path and through its new path.
 #
-# Errors follow the contract in gh-contract.sh (no gh call is made here).
+# Errors follow the contract in contract.sh (no gh call is made here).
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 set -u -o pipefail
 
 SCRIPT="pr-checklist.sh"
 SUBCOMMANDS='<remote> <default-branch>'
-# shellcheck source=gh-contract.sh
-source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
+# shellcheck source=contract.sh
+source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 # shortcut: several processes per row (about 10 ms, 300 rows took about 3 s), fine for the 5 to 20 rows of a real checklist; emit all rows from one jq call beyond that
 main() {
@@ -57,9 +57,7 @@ main() {
     jq -nc --arg state "$state" '{state: $state, items: []}'
     return 0
   fi
-  # shortcut: the same five-line ref check is in branch-diff.sh, merge into one place in the consistency review
-  git rev-parse --verify --quiet "refs/remotes/$remote/$base^{commit}" > /dev/null 2>&1 ||
-    die "$remote/$base" "No remote-tracking branch $remote/$base in this repository."
+  set_range "$remote" "$base"
   while IFS= read -r row; do
     item=$(printf '%s' "$row" | jq -r '.item')
     specs=()
@@ -67,7 +65,7 @@ main() {
       specs+=(":(top,glob)$pattern")
     done < <(printf '%s' "$row" | jq -r '.patterns[]')
     # the exit code of git diff does not tell a match from none: the output does
-    out=$(run_git "changed files of $remote/$base...HEAD" -C "$top" diff "$remote/$base...HEAD" --name-only --no-renames -- "${specs[@]}") ||
+    out=$(run_git "changed files of $RANGE" -C "$top" diff "$RANGE" --name-only --no-renames -- "${specs[@]}") ||
       exit $?
     [[ -z $out ]] ||
       items=$(printf '%s' "$items" | jq -c --arg item "$item" 'if index($item) then . else . + [$item] end')

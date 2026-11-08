@@ -51,62 +51,32 @@ The output is `<behind>` and `<ahead>`, separated by a tab. `<behind>` above 0 �
 
 > "Local branch has commits that are not on `<remote>` yet — push first (`git push`) then re-run `/create-pr`."
 
-**Precondition 3 — Remote URL and host**
+**Precondition 3 — Preflight**
 
-The script cuts the host out of the remote URL offline and prints two lines: the URL and the host.
+One script checks that this is a git repository, cuts the host out of the URL of `<remote>`, confirms the login on that host, reads the repository behind the remote URL and creates a temporary folder. What is collected for the PR is saved in that folder, so later steps can read parts of it instead of carrying all of it in the conversation.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" <remote>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" create-pr <remote>
 ```
 
 Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
 
-Store the first printed line as `<remote-url>` and the second as `<host>`.
+The script prints one JSON line. Store `defaultBranch` as `<default-branch>` and `prDir` as `<pr-dir>`. Host, repository URL and path and the login stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
 
-**Precondition 4 — Confirm auth**
+The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
-```bash
-gh api user --hostname <host> --jq '.login'
-```
-
-Non-zero exit → stop:
-
-> "Not authenticated with `<host>`. Run `gh auth login --hostname <host>` then re-run `/create-pr`."
-
-**Precondition 5 — Repository and default-branch guard**
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" repo <host> <remote-url>
-```
-
-Store the printed `url` as `<repo-url>`, `path` as `<repo-path>` and `defaultBranch` as `<default-branch>`.
+**Precondition 4 — Default-branch guard**
 
 If `<branch>` == `<default-branch>` → stop:
 
 > "Branch `<branch>` is the default branch — create a feature branch first, then re-run `/create-pr`."
-
-**Precondition 6 — Temporary folder**
-
-What is collected for the PR is saved in a temporary folder, so later steps can read parts of it instead of carrying all of it in the conversation. Create the folder:
-
-```bash
-d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp -d "$d/create-pr-XXXXXX"
-```
-
-Non-zero exit → stop:
-
-> "Cannot create a temporary folder for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/create-pr`."
-
-Store the printed path as `<pr-dir>`. Do not delete it.
-
-The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
 Every stored value is reused in later steps; never re-run a command whose result is stored.
 
 ## Mode Detection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" open-pr <host> <repo-url> <branch>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" list-open-prs <pr-dir> <branch>
 ```
 
 The script prints the open PRs of `<branch>` as a JSON array.
@@ -157,7 +127,7 @@ Ask the author for issue numbers via a plain text prompt: "Issue number(s) this 
 Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <N> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
@@ -185,7 +155,7 @@ Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert n
 Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `alert-<N>.json` into `<pr-dir>` and prints one line, `#<N> <ruleId> (<state>)`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <host> <repo-path> <N> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
@@ -217,7 +187,7 @@ This is not verified — `create-pr` has no way to check either action happened 
 ### Step 4 — Label selection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <host> <repo-url> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <pr-dir>
 ```
 
 The script writes all labels to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each label. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
@@ -254,6 +224,8 @@ Store the final label set as `<selected-labels>`.
 
 Using the `<file-table>` paths from Step 1, `<issue-context>` from Step 2, `<codeql-context>` from Step 3, and the label descriptions fetched in Step 4, classify each file, then group files that belong together (see Grouping).
 
+Read `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md` once now: it defines the format of every section of the body. Step 7 reuses it; do not read it again.
+
 | Risk | File characteristics |
 | --- | --- |
 | **Critical** | Auth/security logic, core business rules, data models, DB migrations |
@@ -284,25 +256,7 @@ Within a subsection, two files can share the same bucket but not the same severi
 
 #### Format
 
-Build a draft with one subsection per risk level, in order Critical → Medium → Low. All three subsections are always present, even when a risk level has no files — keep the heading and leave the file list empty, no placeholder bullet (one blank line before the next heading, same spacing as a populated subsection). Each entry (a file or a group) gets a one-line annotation (up to 10 words, not counting a group's file count) summarizing what changed, derived from the diff gathered in Step 1 (for a generated file or a pure rename: from its numbers, `renamedFrom` and the other changed files):
-
-```markdown
-## File risk
-
-### 🔴 Critical
-
-- `<path>` — <short summary of the change>
-- `<path>` — <short summary of the change>
-
-### 🟡 Medium
-
-### 🟢 Low
-
-- `<path>` — <short summary of the change>
-- `<directory or brace pattern>` — <what the group is> (<N> files)
-```
-
-The format is the contract in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`: change it there first, and do not reword or reformat the headings or bullets here.
+Build the draft as the File risk section of `pr-body.md` defines it: one subsection per risk level in the order given there, every entry (a file or a group) with a one-line annotation derived from the diff gathered in Step 1. Do not reword or reformat the headings or bullets.
 
 Store the derived sections as `<file-risk>`.
 
@@ -322,21 +276,14 @@ Store the derived title as `<title>`.
 
 Derive a combined "What" and "Why" from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3:
 
-- **What** — summarize the actual change: what was added, fixed, or modified. Derived from the diff content and commit messages together, not just commit messages alone.
-- **Why** — summarize the motivation. If issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `ruleDescription`/`message` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body). If no motivation is evident from any source, state that explicitly rather than inventing one. Start at the motivation itself — no intro sentence, no restating the title or What — and keep it to 1–5 sentences.
+- **What** — derived from the diff content and the commit messages together, not just the commit messages alone.
+- **Why** — if issue(s) were linked in Step 2, derive Why primarily from the fetched issue body/bodies in `<issue-context>`. If CodeQL alert(s) were linked in Step 3 and no issue provides a motivation, derive Why from the alert's `ruleDescription`/`message` instead. Otherwise, derive from commit messages (e.g. references to a bug, a goal stated in a commit body).
 
-Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, decide this explicitly rather than defaulting. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is a justification that leads with the irreversible thing and names a concrete change from the diff (e.g. "Drops column `users.legacy_id` in `db/migrations/0042_drop_users_legacy_id.sql`; reverting the PR won't restore the data."). "Risky" alone is not a justification.
+Write both as `pr-body.md` describes.
 
-Assemble `<body>` as defined in `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md`: a `## What` section with the derived What text, followed by a `## Why` section with the derived Why text, followed by `<file-risk>` from Step 5, followed by a `## Merge danger` section built from `<merge-danger>` (omitted if `<merge-danger>` is empty), followed by a `## Closes` section built from `<closes>` (omitted if `<closes>` is empty), followed by a `## PR checklist` section built from `<pr-checklist>` (omitted entirely if `<pr-checklist>` is empty):
+Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, decide this explicitly rather than defaulting. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is the justification, written as `pr-body.md` describes.
 
-```markdown
-## PR checklist
-
-- [ ] <checklist item 1>
-- [ ] <checklist item 2>
-```
-
-Rendered as standard GitHub Flavored Markdown task-list items (unchecked) — GitHub renders these as interactive checkboxes on the PR page, but `create-pr` itself never checks them and never reads their checked state back.
+Assemble `<body>` from the sections in `pr-body.md`, in the order given there: What and Why from above, `<file-risk>` from Step 5, then Merge danger from `<merge-danger>`, Closes from `<closes>` and PR checklist from `<pr-checklist>`, each of the last three omitted when its value is empty. Follow the skeleton there exactly.
 
 Default `<draft-state>` to "ready for review".
 
@@ -365,12 +312,12 @@ Check that the body can be read by the other skills:
 jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-dir>/body.txt
 ```
 
-Expected: `fileRisk.state` is `ok` and `closes.numbers` equals the issue numbers in `<closes>`. Anything else means the body drifted from the contract: show the difference in the preview, go back to the loop above, and run no `gh pr create`.
+Expected: `fileRisk.state` is `ok`, `closes.numbers` equals the issue numbers in `<closes>`, and `mergeDanger` is `null` exactly when `<merge-danger>` is empty. Anything else means the body drifted from the contract: show the difference in the preview, go back to the loop above, and run no `gh pr create`.
 
 Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no` otherwise, followed by one argument per label in `<selected-labels>` (none if empty). The script reads both files and prints the PR URL:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <host> <repo-url> <pr-dir> <yes|no> ["<label>" ...]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <pr-dir> <yes|no> ["<label>" ...]
 ```
 
 Display the PR URL.
