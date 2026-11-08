@@ -1332,5 +1332,16 @@ else
   report "skills/review-pr script calls use the short signatures" fail "a pr-data.sh call does not match the short signature"
 fi
 
+# ---- skills: manual-only, so the model never starts them from a loose description match ----
+
+for skill in create-pr review-pr doctor; do
+  frontmatter=$(awk '/^---$/ { n++; next } n == 1' "$root/plugins/dotclaude-dev/skills/$skill/SKILL.md")
+  if printf '%s\n' "$frontmatter" | grep -qx 'disable-model-invocation: true'; then
+    report "skills/$skill is manual-only" ok
+  else
+    report "skills/$skill is manual-only" fail "disable-model-invocation: true missing in the frontmatter"
+  fi
+done
+
 echo "$passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]

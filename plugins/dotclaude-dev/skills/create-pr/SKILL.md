@@ -1,6 +1,7 @@
 ---
 name: create-pr
 description: Use when creating a pull request for the current branch, which is already committed and pushed.
+disable-model-invocation: true
 compatibility: Requires git, gh CLI, jq and internet access to GitHub
 ---
 
