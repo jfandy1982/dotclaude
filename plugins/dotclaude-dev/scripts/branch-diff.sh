@@ -6,14 +6,14 @@
 #       added/removed are null for binary files, diff is the path of the diff file or null
 #   branch-diff.sh file <remote> <default-branch> <path> [<old-path>]
 #       prints the diff of one path (nothing when the path did not change); pass renamedFrom as <old-path> for a renamed file
-# Errors follow the contract in gh-contract.sh (no gh call is made here).
+# Errors follow the contract in contract.sh (no gh call is made here).
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 set -u -o pipefail
 
 SCRIPT="branch-diff.sh"
 SUBCOMMANDS='files|file'
-# shellcheck source=gh-contract.sh
-source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
+# shellcheck source=contract.sh
+source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 RANGE=""
 # the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file; removed on exit with the contract's own scratch file

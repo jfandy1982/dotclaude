@@ -13,14 +13,14 @@
 #   pr-data.sh feedback <host> <repo-path> <pr-number> <pr-dir>
 #       reads comments and reviews from <pr-dir>/pr.json, fetches the inline comments,
 #       writes <pr-dir>/feedback.json, prints the counts
-# Errors follow the contract in gh-contract.sh (one JSON line on stderr, fixed exit codes).
+# Errors follow the contract in contract.sh (one JSON line on stderr, fixed exit codes).
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 set -u -o pipefail
 
 SCRIPT="pr-data.sh"
 SUBCOMMANDS='pr|issue|alert|ci|feedback'
-# shellcheck source=gh-contract.sh
-source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
+# shellcheck source=contract.sh
+source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 # require_pr_json <dir> <what>: the offline subcommands read what pr wrote
 require_pr_json() {

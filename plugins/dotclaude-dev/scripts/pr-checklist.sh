@@ -30,14 +30,14 @@
 # silent non-match. Changed means added, changed or deleted; renames are not followed, so a file moved out of a folder
 # matches through its old path and through its new path.
 #
-# Errors follow the contract in gh-contract.sh (no gh call is made here).
+# Errors follow the contract in contract.sh (no gh call is made here).
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 set -u -o pipefail
 
 SCRIPT="pr-checklist.sh"
 SUBCOMMANDS='<remote> <default-branch>'
-# shellcheck source=gh-contract.sh
-source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
+# shellcheck source=contract.sh
+source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 # shortcut: several processes per row (about 10 ms, 300 rows took about 3 s), fine for the 5 to 20 rows of a real checklist; emit all rows from one jq call beyond that
 main() {

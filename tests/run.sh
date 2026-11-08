@@ -369,7 +369,7 @@ run_data "$stub" feedback github.example.local o/r 7 PR_DIR
 SEED_PR_JSON=""
 expect_text "feedback/no comments at all" "$tmp/data.out" "0 comments, 0 reviews, 0 inline comments"
 
-# ---- error contract (gh-contract.sh) ----
+# ---- error contract (contract.sh) ----
 # Every error class, tested once through the pr subcommand of pr-data.sh; pr-create.sh gets the same code by sourcing the file.
 # The stub also prints an error body on stdout, which must not leak.
 

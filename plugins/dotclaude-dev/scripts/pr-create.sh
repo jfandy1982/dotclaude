@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GitHub calls of create-pr behind one error contract (gh-contract.sh).
+# GitHub calls of create-pr behind one error contract (contract.sh).
 #   pr-create.sh repo <host> <remote-url>
 #       one gh repo view; prints {url, path, defaultBranch}
 #   pr-create.sh labels <host> <repo-url> <pr-dir>
@@ -15,8 +15,8 @@ set -u -o pipefail
 
 SCRIPT="pr-create.sh"
 SUBCOMMANDS='repo|labels|open-pr|create'
-# shellcheck source=gh-contract.sh
-source "$(dirname "${BASH_SOURCE[0]}")/gh-contract.sh"
+# shellcheck source=contract.sh
+source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 cmd_repo() {
   local host=$1 remote_url=$2

@@ -9,7 +9,7 @@ HOST=""
 OUT=""
 VERB="read"
 
-command -v jq > /dev/null 2>&1 || { echo "${SCRIPT:-gh-contract.sh}: jq is required" >&2; exit 1; }
+command -v jq > /dev/null 2>&1 || { echo "${SCRIPT:-contract.sh}: jq is required" >&2; exit 1; }
 ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/dotclaude-gh-XXXXXX") || exit 1
 trap 'rm -f "$ERR_FILE"' EXIT
 
