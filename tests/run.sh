@@ -1023,6 +1023,81 @@ LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$rg_di
 expect_error "run_git/branch-diff files: outside a repository" 1 other false
 expect_error_message "run_git/branch-diff files: outside a repository, git's reason" "not a git repository"
 
+# ---- contract.sh: require_repo, load_preflight, the skill hint ----
+
+# contract-call.sh <function> <arguments...>: calls one function of contract.sh, then prints HOST, REPO_URL, REPO_PATH and SKILL; TEST_SKILL pre-sets SKILL
+cat > "$tmp/contract-call.sh" << 'EOT'
+SCRIPT="contract-call.sh"
+SUBCOMMANDS='<function>'
+source "$CONTRACT_FILE"
+SKILL=${TEST_SKILL:-}
+fn=$1
+shift
+"$fn" "$@"
+printf '%s|%s|%s|%s\n' "$HOST" "$REPO_URL" "$REPO_PATH" "$SKILL"
+EOT
+export CONTRACT_FILE="$root/plugins/dotclaude-dev/scripts/contract.sh"
+
+PLAIN_DIR="$bd_repo" run_plain "$tmp/contract-call.sh" require_repo
+expect_text "require_repo/inside a repository passes" "$tmp/data.out" "|||"
+PLAIN_DIR="$rg_bare" run_plain "$tmp/contract-call.sh" require_repo
+expect_error "require_repo/outside a repository" 1 other false
+jq -e '.message | endswith("then re-run.")' "$tmp/data.err" > /dev/null 2>&1 &&
+  report "require_repo/message without a skill ends with the plain hint" ok ||
+  report "require_repo/message without a skill ends with the plain hint" fail "$(cat "$tmp/data.err")"
+TEST_SKILL=create-pr PLAIN_DIR="$rg_bare" run_plain "$tmp/contract-call.sh" require_repo
+jq -e '.message | endswith("then re-run `/create-pr`.")' "$tmp/data.err" > /dev/null 2>&1 &&
+  report "require_repo/message with a skill names it" ok ||
+  report "require_repo/message with a skill names it" fail "$(cat "$tmp/data.err")"
+
+lp_dir=$(mktemp -d "$tmp/preflight-XXXXXX")
+cat > "$lp_dir/preflight.json" << 'EOT'
+{"skill":"review-pr","host":"github.example.local","repoUrl":"https://github.example.local/o/r","repoPath":"o/r","prDir":"x"}
+EOT
+run_plain "$tmp/contract-call.sh" load_preflight "$lp_dir"
+expect_text "load_preflight/sets host, repo URL, repo path and skill" "$tmp/data.out" "github.example.local|https://github.example.local/o/r|o/r|review-pr"
+
+lp_bare=$(mktemp -d "$tmp/preflight-XXXXXX")
+echo '{"host":"h","repoUrl":"u","repoPath":"o/r"}' > "$lp_bare/preflight.json"
+run_plain "$tmp/contract-call.sh" load_preflight "$lp_bare"
+expect_text "load_preflight/a file without skill leaves it empty" "$tmp/data.out" "h|u|o/r|"
+
+lp_missing=$(mktemp -d "$tmp/preflight-XXXXXX")
+run_plain "$tmp/contract-call.sh" load_preflight "$lp_missing"
+expect_error "load_preflight/folder without preflight.json" 1 other false
+expect_error_message "load_preflight/folder without preflight.json, what to do" "Run preflight first"
+
+lp_partial=$(mktemp -d "$tmp/preflight-XXXXXX")
+echo '{"skill":"create-pr","host":"h"}' > "$lp_partial/preflight.json"
+run_plain "$tmp/contract-call.sh" load_preflight "$lp_partial"
+expect_error "load_preflight/a file without repoUrl and repoPath" 1 other false
+expect_error_message "load_preflight/a file without repoUrl and repoPath, what is missing" "lacks host, repoUrl or repoPath"
+
+lp_bad=$(mktemp -d "$tmp/preflight-XXXXXX")
+echo 'not json' > "$lp_bad/preflight.json"
+run_plain "$tmp/contract-call.sh" load_preflight "$lp_bad"
+expect_error "load_preflight/a file that is not JSON" 1 other false
+expect_error_message "load_preflight/a file that is not JSON, message" "Cannot read"
+
+# every gh error class ends with the skill as a command when a skill is known, and with the plain hint otherwise
+while IFS='|' read -r label gh_exit stderr_text; do
+  stub=$(new_stub)
+  fail_stub "$stub" pr-view "$gh_exit" "$stderr_text"
+  TEST_SKILL=create-pr run_stub "$stub" "$tmp/contract-call.sh" run_gh "the PR" pr view 1
+  jq -e '.message | endswith("then re-run `/create-pr`.")' "$tmp/data.err" > /dev/null 2>&1 &&
+    report "hint/$label names the skill" ok ||
+    report "hint/$label names the skill" fail "$(cat "$tmp/data.err")"
+  run_stub "$stub" "$tmp/contract-call.sh" run_gh "the PR" pr view 1
+  jq -e '.message | endswith("then re-run.")' "$tmp/data.err" > /dev/null 2>&1 &&
+    report "hint/$label without a skill keeps the plain text" ok ||
+    report "hint/$label without a skill keeps the plain text" fail "$(cat "$tmp/data.err")"
+done << 'EOT'
+auth|4|authentication required
+rate limit|1|gh: API rate limit exceeded (HTTP 403)
+not found|1|gh: Not Found (HTTP 404)
+network|1|error connecting to github.example.local
+EOT
+
 # ---- skills: the failure rule for script calls is worded the same ----
 
 rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.'

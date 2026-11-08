@@ -2,6 +2,7 @@
 # The sourcing script sets SCRIPT and SUBCOMMANDS (for the usage message) and may set VERB (default "read", "create" for writes).
 # On failure: nothing on stdout, one JSON line on stderr {error, exit, retryable, what, message}
 # and a fixed exit code: 10 auth, 11 not_found, 12 rate_limited, 13 network, 1 other, 2 usage.
+# SKILL (set by load_preflight, or by the script itself) names the skill in the "then re-run" hint of the messages; empty keeps the plain "re-run".
 # shortcut: the cause is matched from the text of gh's error output, replace by a structured status if gh offers one.
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 
@@ -9,6 +10,9 @@ HOST=""
 OUT=""
 VERB="read"
 RANGE=""
+SKILL=""
+REPO_URL=""
+REPO_PATH=""
 
 command -v jq > /dev/null 2>&1 || { echo "${SCRIPT:-contract.sh}: jq is required" >&2; exit 1; }
 ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/dotclaude-gh-XXXXXX") || exit 1
@@ -30,6 +34,16 @@ die() {
   return 0
 }
 
+# rerun: prints "re-run", followed by the skill as a command when SKILL is set
+rerun() {
+  if [[ -n $SKILL ]]; then
+    printf 're-run `/%s`' "$SKILL"
+  else
+    printf 're-run'
+  fi
+  return 0
+}
+
 usage() {
   emit_error usage 2 false "arguments" "Wrong arguments. Usage: $SCRIPT $SUBCOMMANDS <arguments>, see the header of the script."
   return 0
@@ -40,16 +54,16 @@ fail() {
   local what=$1 code=$2 first
   first=$(head -n 1 "$ERR_FILE")
   if [[ $code -eq 4 ]] || grep -qiE 'HTTP 401|gh auth login' "$ERR_FILE"; then
-    emit_error auth 10 false "$what" "Not authenticated with $HOST. Run \`gh auth login --hostname $HOST\`, then re-run."
+    emit_error auth 10 false "$what" "Not authenticated with $HOST. Run \`gh auth login --hostname $HOST\`, then $(rerun)."
   fi
   if grep -qi 'rate limit' "$ERR_FILE"; then
-    emit_error rate_limited 12 true "$what" "Could not $VERB $what: GitHub rate limit reached. Wait a few minutes, then re-run."
+    emit_error rate_limited 12 true "$what" "Could not $VERB $what: GitHub rate limit reached. Wait a few minutes, then $(rerun)."
   fi
   if grep -qiE 'could not resolve to|no pull requests found|not found|HTTP 40[34]|HTTP 410' "$ERR_FILE"; then
-    emit_error not_found 11 false "$what" "Could not $VERB $what: not found, or you have no access. Check the number and your access to the repository, then re-run."
+    emit_error not_found 11 false "$what" "Could not $VERB $what: not found, or you have no access. Check the number and your access to the repository, then $(rerun)."
   fi
   if grep -qiE 'error connecting to|no such host|could not resolve host|timeout|dial tcp|connection refused' "$ERR_FILE"; then
-    emit_error network 13 true "$what" "Could not $VERB $what: cannot reach $HOST. Check the connection, then re-run."
+    emit_error network 13 true "$what" "Could not $VERB $what: cannot reach $HOST. Check the connection, then $(rerun)."
   fi
   emit_error other 1 false "$what" "Could not $VERB $what: ${first:-gh exited with code $code}."
   return 0
@@ -87,6 +101,25 @@ write_file() {
   fi
   rm -f "$tmp"
   die "$name" "Cannot write $dir/$name."
+}
+
+# require_repo: dies unless the working directory is inside a git work tree
+require_repo() {
+  [[ $(git rev-parse --is-inside-work-tree 2> /dev/null) == true ]] ||
+    die "repository" "Not inside a git repository. Run from a clone of the target repo, then $(rerun)."
+  return 0
+}
+
+# load_preflight <dir>: sets HOST, REPO_URL, REPO_PATH and SKILL from <dir>/preflight.json, which preflight.sh wrote
+load_preflight() {
+  local dir=$1 file out
+  file="$dir/preflight.json"
+  [[ -f $file ]] || die "preflight.json" "Folder $dir has no preflight.json. Run preflight first."
+  out=$(jq -r '(.host // ""), (.repoUrl // ""), (.repoPath // ""), (.skill // "")' "$file" 2> /dev/null) ||
+    die "preflight.json" "Cannot read $file."
+  { IFS= read -r HOST; IFS= read -r REPO_URL; IFS= read -r REPO_PATH; IFS= read -r SKILL; } <<< "$out"
+  [[ -n $HOST && -n $REPO_URL && -n $REPO_PATH ]] || die "preflight.json" "$file lacks host, repoUrl or repoPath."
+  return 0
 }
 
 # set_range <remote> <default-branch>: sets RANGE to the three-dot range (the changes since the merge-base), dies when the remote-tracking branch does not exist
