@@ -1332,5 +1332,42 @@ else
   report "skills/review-pr script calls use the short signatures" fail "a pr-data.sh call does not match the short signature"
 fi
 
+# ---- skills: manual-only, so the model never starts them from a loose description match ----
+
+for skill in create-pr review-pr doctor; do
+  frontmatter=$(awk '/^---$/ { n++; next } n == 1' "$root/plugins/dotclaude-dev/skills/$skill/SKILL.md")
+  if printf '%s\n' "$frontmatter" | grep -qx 'disable-model-invocation: true'; then
+    report "skills/$skill is manual-only" ok
+  else
+    report "skills/$skill is manual-only" fail "disable-model-invocation: true missing in the frontmatter"
+  fi
+done
+
+# ---- skills/create-pr: --issue and --alert arguments ----
+
+create_header=$(awk '/^---$/ { n++; next } n == 1' "$create_skill")
+if printf '%s\n' "$create_header" | grep -qE "^argument-hint: '.*--issue.*--alert.*'$"; then
+  report "skills/create-pr has a quoted argument-hint for --issue and --alert" ok
+else
+  report "skills/create-pr has a quoted argument-hint for --issue and --alert" fail "argument-hint missing, not quoted or without both options"
+fi
+
+# Steps 2 and 3 take their answer from the argument when it is set
+if grep -qF '`<issue-arg>`' "$create_skill" && grep -qF '`<alert-arg>`' "$create_skill" &&
+  grep -qF 'Anything else (a token that is neither' "$create_skill"; then
+  report "skills/create-pr reads <issue-arg> and <alert-arg>" ok
+else
+  report "skills/create-pr reads <issue-arg> and <alert-arg>" fail "a variable or the usage stop is missing"
+fi
+
+# The cleaning command of Step 2 is run as written: strips zeros, drops empty items, dedupes, sorts ascending
+clean_lines=$(grep -F '| sort -nu' "$create_skill")
+if [[ $(printf '%s\n' "$clean_lines" | wc -l) -eq 1 ]]; then
+  clean_cmd=${clean_lines//<numbers>/042 38 0 038 00 7}
+  expect_text "skills/create-pr number cleaning command" <(bash -c "$clean_cmd") $'7\n38\n42'
+else
+  report "skills/create-pr number cleaning command" fail "expected exactly one cleaning command line"
+fi
+
 echo "$passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]

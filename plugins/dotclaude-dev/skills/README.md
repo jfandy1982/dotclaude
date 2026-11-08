@@ -6,5 +6,5 @@
 
 ## In Development
 
-- `create-pr/` — handles PR preconditions, silent file-risk/label/title/body inference with a single combined preview loop, collects context from git commits, diff, and optionally github issues or scanner-issues
+- `create-pr/` — handles PR preconditions, silent file-risk/label/title/body inference with a single combined preview loop, collects context from git commits, diff, and optionally github issues or scanner-issues; the optional `--issue` and `--alert` arguments (numbers or N/A) skip those two prompts
 - `review-pr/` — reviews an open PR created via `create-pr` from various angles considering context from PR including file-risk/merge-danger/linked-issues/prior-feedback. Optionally reports findings as GitHub PR comments.

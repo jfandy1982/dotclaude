@@ -1,6 +1,7 @@
 ---
 name: review-pr
 description: Use when reviewing an open pull request created via create-pr, or when asked for a multi-angle review (simplification, silent failures, tests, comments, types) of such a PR.
+disable-model-invocation: true
 compatibility: Requires git, gh CLI, jq and internet access to GitHub
 argument-hint: '[pr-number-or-url] [review-scope]'
 ---
