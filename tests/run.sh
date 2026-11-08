@@ -1307,6 +1307,15 @@ else
   report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing or an old setup call or host variable is left"
 fi
 
+# Step 5 reads the body format from pr-body.md and Step 8 checks mergeDanger; the skeleton lives only in pr-body.md
+if grep -qF 'Read `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md` once' "$create_skill" &&
+  grep -qF 'and `mergeDanger` is `null` exactly when' "$create_skill" &&
+  ! grep -qF -e '### 🔴' -e '### 🟡' -e '### 🟢' -e '- [ ]' "$create_skill"; then
+  report "skills/create-pr takes the body format from pr-body.md" ok
+else
+  report "skills/create-pr takes the body format from pr-body.md" fail "read instruction or mergeDanger check missing, or a skeleton line is left"
+fi
+
 review_skill="$root/plugins/dotclaude-dev/skills/review-pr/SKILL.md"
 if grep -qF 'scripts/preflight.sh" review-pr origin' "$review_skill" && ! grep -qE 'remote-host\.sh|gh api user|gh repo view|<host>|<repo-path>|<origin-url>' "$review_skill"; then
   report "skills/review-pr Preconditions use preflight.sh" ok
