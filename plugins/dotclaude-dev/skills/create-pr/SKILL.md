@@ -51,62 +51,32 @@ The output is `<behind>` and `<ahead>`, separated by a tab. `<behind>` above 0 �
 
 > "Local branch has commits that are not on `<remote>` yet — push first (`git push`) then re-run `/create-pr`."
 
-**Precondition 3 — Remote URL and host**
+**Precondition 3 — Preflight**
 
-The script cuts the host out of the remote URL offline and prints two lines: the URL and the host.
+One script checks that this is a git repository, cuts the host out of the URL of `<remote>`, confirms the login on that host, reads the repository behind the remote URL and creates a temporary folder. What is collected for the PR is saved in that folder, so later steps can read parts of it instead of carrying all of it in the conversation.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" <remote>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" create-pr <remote>
 ```
 
 Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
 
-Store the first printed line as `<remote-url>` and the second as `<host>`.
+The script prints one JSON line. Store `defaultBranch` as `<default-branch>` and `prDir` as `<pr-dir>`. Host, repository URL and path and the login stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
 
-**Precondition 4 — Confirm auth**
+The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
-```bash
-gh api user --hostname <host> --jq '.login'
-```
-
-Non-zero exit → stop:
-
-> "Not authenticated with `<host>`. Run `gh auth login --hostname <host>` then re-run `/create-pr`."
-
-**Precondition 5 — Repository and default-branch guard**
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" repo <host> <remote-url>
-```
-
-Store the printed `url` as `<repo-url>`, `path` as `<repo-path>` and `defaultBranch` as `<default-branch>`.
+**Precondition 4 — Default-branch guard**
 
 If `<branch>` == `<default-branch>` → stop:
 
 > "Branch `<branch>` is the default branch — create a feature branch first, then re-run `/create-pr`."
-
-**Precondition 6 — Temporary folder**
-
-What is collected for the PR is saved in a temporary folder, so later steps can read parts of it instead of carrying all of it in the conversation. Create the folder:
-
-```bash
-d="${TMPDIR:-/tmp}/dotclaude-dev" && mkdir -p -m 700 "$d" && mktemp -d "$d/create-pr-XXXXXX"
-```
-
-Non-zero exit → stop:
-
-> "Cannot create a temporary folder for the PR data. The error above names the folder: make it writable for your user or set `TMPDIR` to another folder, then re-run `/create-pr`."
-
-Store the printed path as `<pr-dir>`. Do not delete it.
-
-The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
 Every stored value is reused in later steps; never re-run a command whose result is stored.
 
 ## Mode Detection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" open-pr <host> <repo-url> <branch>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" list-open-prs <pr-dir> <branch>
 ```
 
 The script prints the open PRs of `<branch>` as a JSON array.
@@ -157,7 +127,7 @@ Ask the author for issue numbers via a plain text prompt: "Issue number(s) this 
 Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <host> <repo-url> <N> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
@@ -185,7 +155,7 @@ Ask the author for CodeQL alert numbers via a plain text prompt: "CodeQL alert n
 Check that every number is digits only, otherwise ask the author again. For each number, run one command (they are independent, so they may run in parallel). The script writes `alert-<N>.json` into `<pr-dir>` and prints one line, `#<N> <ruleId> (<state>)`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <host> <repo-path> <N> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
@@ -217,7 +187,7 @@ This is not verified — `create-pr` has no way to check either action happened 
 ### Step 4 — Label selection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <host> <repo-url> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <pr-dir>
 ```
 
 The script writes all labels to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each label. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
@@ -370,7 +340,7 @@ Expected: `fileRisk.state` is `ok` and `closes.numbers` equals the issue numbers
 Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no` otherwise, followed by one argument per label in `<selected-labels>` (none if empty). The script reads both files and prints the PR URL:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <host> <repo-url> <pr-dir> <yes|no> ["<label>" ...]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <pr-dir> <yes|no> ["<label>" ...]
 ```
 
 Display the PR URL.

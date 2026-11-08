@@ -520,9 +520,9 @@ check "labels/fallback mode without type: or aspect: labels" "$tmp/data.out" "$t
 stub=$(new_stub)
 printf '%s\n' '[]' > "$stub/pr-list.out"
 work=$(new_work)
-run_stub "$stub" "$create_script" open-pr "$work" feat/x
-expect_text "open-pr/none" "$tmp/data.out" "[]"
-expect_call "open-pr/asks for the branch and open PRs" "$stub" "pr list --repo $repo_url --head feat/x --state open"
+run_stub "$stub" "$create_script" list-open-prs "$work" feat/x
+expect_text "list-open-prs/none" "$tmp/data.out" "[]"
+expect_call "list-open-prs/asks for the branch and open PRs" "$stub" "pr list --repo $repo_url --head feat/x --state open"
 
 # create: title and body come from files and reach gh unchanged
 title='fix: quote `$TMPDIR` in "paths" $(echo x)'
@@ -587,7 +587,7 @@ EOT
 work=$(mktemp -d "$tmp/work-XXXXXX")
 printf '%s\n' 'a title' > "$work/title.txt"
 printf '%s\n' 'body text' > "$work/body.txt"
-for sub in "labels $work" "open-pr $work feat/x" "create $work no"; do
+for sub in "labels $work" "list-open-prs $work feat/x" "create $work no"; do
   run_stub "$stub" "$create_script" $sub
   expect_error "preflight.json/pr-create ${sub%% *} needs the file" 1 other false
   expect_error_message "preflight.json/pr-create ${sub%% *} says what to do" "Run preflight first"
@@ -1285,6 +1285,13 @@ if grep -qF 'scripts/pr-data.sh" alert' "$create_skill" && ! grep -qF 'repos/{ow
   report "skills/create-pr Step 3 uses pr-data.sh alert" ok
 else
   report "skills/create-pr Step 3 uses pr-data.sh alert" fail "script call missing or repos/{owner}/{repo} is left"
+fi
+
+# The setup comes from one preflight call; no host, repository or remote URL is passed around any more
+if grep -qF 'scripts/preflight.sh" create-pr <remote>' "$create_skill" && ! grep -qE 'remote-host\.sh|gh api user|pr-create\.sh" repo|<host>|<repo-url>|<repo-path>|<remote-url>' "$create_skill"; then
+  report "skills/create-pr Preconditions use preflight.sh" ok
+else
+  report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing or an old setup call or host variable is left"
 fi
 
 echo "$passed passed, $failed failed"

@@ -5,7 +5,7 @@
 #       gh label list (limit 50: the target repos have about 25 labels, raise it if a repo exceeds 50);
 #       writes <pr-dir>/labels.json (all labels), prints {mode, labels}:
 #       "taxonomy" with the labels prefixed type: or aspect:, or "fallback" with all labels when there are none
-#   pr-create.sh open-pr <pr-dir> <branch>
+#   pr-create.sh list-open-prs <pr-dir> <branch>
 #       prints the open PRs with that head branch: [{number, title, url}]
 #   pr-create.sh create <pr-dir> <yes|no> [<label>...]
 #       reads <pr-dir>/title.txt and <pr-dir>/body.txt, runs gh pr create (yes = draft), prints the PR URL
@@ -13,7 +13,7 @@
 set -u -o pipefail
 
 SCRIPT="pr-create.sh"
-SUBCOMMANDS='labels|open-pr|create'
+SUBCOMMANDS='labels|list-open-prs|create'
 # shellcheck source=contract.sh
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
@@ -30,7 +30,7 @@ cmd_labels() {
   return 0
 }
 
-cmd_open_pr() {
+cmd_list_open_prs() {
   local dir=$1 branch=$2
   load_preflight "$dir"
   run_gh "open PRs of branch $branch" pr list --repo "$REPO_URL" --head "$branch" --state open --json number,title,url
@@ -64,7 +64,7 @@ main() {
   [[ $# -gt 0 ]] && shift
   case $cmd in
     labels) [[ $# -eq 1 ]] || usage; cmd_labels "$@" ;;
-    open-pr) [[ $# -eq 2 ]] || usage; cmd_open_pr "$@" ;;
+    list-open-prs) [[ $# -eq 2 ]] || usage; cmd_list_open_prs "$@" ;;
     create) [[ $# -ge 2 ]] || usage; cmd_create "$@" ;;
     *) usage ;;
   esac
