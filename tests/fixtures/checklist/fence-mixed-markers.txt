@@ -1,0 +1,14 @@
+### PR merge checklist
+
+Example, a ~~~ line inside a ``` fence does not close it:
+
+```markdown
+~~~
+| File pattern | Checklist item |
+| --- | --- |
+| `x.txt` | Fenced |
+```
+
+| File pattern | Checklist item |
+| --- | --- |
+| `y.txt` | Real |

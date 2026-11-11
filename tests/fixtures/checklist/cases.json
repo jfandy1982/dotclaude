@@ -293,5 +293,35 @@
         }
       ]
     }
+  },
+  {
+    "name": "fence-mixed-markers",
+    "fixture": "fence-mixed-markers.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "y.txt"
+          ],
+          "item": "Real"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fence-longer-opening",
+    "fixture": "fence-longer-opening.txt",
+    "expected": {
+      "state": "ok",
+      "rows": [
+        {
+          "patterns": [
+            "y.txt"
+          ],
+          "item": "Real"
+        }
+      ]
+    }
   }
 ]

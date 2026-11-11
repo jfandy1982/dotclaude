@@ -1,0 +1,14 @@
+### PR merge checklist
+
+Example, a shorter fence line inside a longer fence does not close it:
+
+````markdown
+```
+| File pattern | Checklist item |
+| --- | --- |
+| `x.txt` | Fenced |
+````
+
+| File pattern | Checklist item |
+| --- | --- |
+| `y.txt` | Real |

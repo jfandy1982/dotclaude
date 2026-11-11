@@ -11,7 +11,8 @@
 # Table format: a heading line "### PR merge checklist" starts the section. The heading must match exactly (trailing spaces
 # are ignored, leading spaces or another level such as "####" are not); only the first such heading is used. The next
 # heading of level 1 to 3 ends the section, deeper headings stay inside. Lines inside fenced code blocks (``` or ~~~) are
-# ignored, so an example table in a fence is not the checklist. The first markdown table of the section is the checklist:
+# ignored, so an example table in a fence is not the checklist; a fence ends only at a line of the same character that is at
+# least as long as the opening one. The first markdown table of the section is the checklist:
 # a block of consecutive lines that start with "|" (a trailing "|" is optional). Columns are found by their exact header
 # text "File pattern" and "Checklist item", in any order; other columns are ignored. Cells are split on every "|" that
 # is not escaped, also inside backticks: write "\|" for a literal pipe (the item keeps the "\|" as written). Rows with
