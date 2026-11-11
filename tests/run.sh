@@ -742,6 +742,12 @@ expect_jq "branch-diff/files: hand-written files, numbers and diff files" \
          {path: "src/a.txt", renamedFrom: null, added: 2, removed: 0, generated: false, diff: ($d + "/diff/002.diff")}]' --arg d "$bd_dir"
 expect_in_file "branch-diff/files: diff file holds the change" "$bd_dir/diff/001.diff" "+two"
 
+# one call per folder: a second call must not mix its files with the first run's
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$bd_dir"
+expect_error "branch-diff/files: a second call in the same folder is refused" 1 other false
+expect_error_message "branch-diff/files: the refusal says the folder has diff/ already" "already has diff/"
+expect_in_file "branch-diff/files: the refusal leaves the first run's diff file alone" "$bd_dir/diff/001.diff" "+two"
+
 bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
 PLAIN_DIR="$bd_repo/src" run_plain "$diff_script" files origin main "$bd_dir"
 expect_jq "branch-diff/files: from a subdirectory of the repository" \
@@ -1097,7 +1103,7 @@ expect_jq "pr-checklist/an unusable table does not need the remote branch" '. ==
 PLAIN_DIR="$cl_repo" run_plain "$checklist_script" origin missing-branch
 expect_error "pr-checklist/unknown remote-tracking branch" 1 other false
 checklist_message=$(jq -r '.message' "$tmp/data.err")
-PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin missing-branch "$bd_dir"
+PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin missing-branch "$(mktemp -d "$tmp/folder-XXXXXX")"
 if [[ $(jq -r '.message' "$tmp/data.err") == "$checklist_message" ]]; then
   report "set_range: branch-diff and pr-checklist give the same message for a missing branch" ok
 else
@@ -1139,7 +1145,7 @@ rg_bare=$(mktemp -d "$tmp/bare-XXXXXX")
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$checklist_script" origin main
 expect_error "run_git/pr-checklist: outside a repository" 1 other false
 expect_error_message "run_git/pr-checklist: outside a repository, git's reason" "not a git repository"
-LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$rg_dir"
+LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$(mktemp -d "$tmp/folder-XXXXXX")"
 expect_error "run_git/branch-diff files: outside a repository" 1 other false
 expect_error_message "run_git/branch-diff files: outside a repository, git's reason" "not a git repository"
 
