@@ -584,10 +584,26 @@ expect_no_call "create/no label flag without labels" "$stub" "--label"
 stub=$(new_stub)
 fail_stub "$stub" pr-create 1 "error connecting to github.example.local"
 run_stub "$stub" "$create_script" create "$work" no
-expect_error "create/gh fails" 13 network true
+expect_error "create/gh fails" 13 network false
 jq -e '.message | startswith("Could not create the PR")' "$tmp/data.err" > /dev/null &&
   report "create/failure message says create" ok ||
   report "create/failure message says create" fail "$(cat "$tmp/data.err")"
+expect_error_message "create/network error says to look for the PR before re-running" "gh pr list --head"
+
+# a network error after the server accepted the request could have created the PR: never retryable (timeout, dial tcp)
+for phrase in "Post \"https://github.example.local/api/graphql\": context deadline exceeded (Client.Timeout exceeded while awaiting headers) timeout" "dial tcp 10.0.0.1:443: i/o timeout"; do
+  stub=$(new_stub)
+  fail_stub "$stub" pr-create 1 "$phrase"
+  run_stub "$stub" "$create_script" create "$work" no
+  expect_error "create/$phrase" 13 network false
+done
+
+# a missing label is not a wrong PR number
+stub=$(new_stub)
+fail_stub "$stub" pr-create 1 "could not add label: 'nope' not found"
+run_stub "$stub" "$create_script" create "$work" no "nope"
+expect_error "create/label does not exist" 11 not_found false
+expect_error_message "create/label does not exist, message names the labels" "Check the labels"
 
 stub=$(new_stub)
 work=$(new_work)

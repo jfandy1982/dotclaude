@@ -61,9 +61,16 @@ fail() {
     emit_error rate_limited 12 true "$what" "Could not $VERB $what: GitHub rate limit reached. Wait a few minutes, then $(rerun)."
   fi
   if grep -qiE 'could not resolve to|no pull requests found|not found|HTTP 40[34]|HTTP 410' "$ERR_FILE"; then
+    if [[ $VERB == create ]]; then
+      emit_error not_found 11 false "$what" "Could not $VERB $what: something it needs was not found, or you have no access. Check the labels, the branch and your access to the repository, then $(rerun)."
+    fi
     emit_error not_found 11 false "$what" "Could not $VERB $what: not found, or you have no access. Check the number and your access to the repository, then $(rerun)."
   fi
   if grep -qiE 'error connecting to|no such host|could not resolve host|timeout|dial tcp|connection refused' "$ERR_FILE"; then
+    # shortcut: a timeout after GitHub accepted the request would make a re-run create a second PR; whether gh can time out that way is unverified, so a create is never retryable
+    if [[ $VERB == create ]]; then
+      emit_error network 13 false "$what" "Could not $VERB $what: cannot reach $HOST. The PR may have been created anyway: check \`gh pr list --head <branch>\` before you $(rerun)."
+    fi
     emit_error network 13 true "$what" "Could not $VERB $what: cannot reach $HOST. Check the connection, then $(rerun)."
   fi
   emit_error other 1 false "$what" "Could not $VERB $what: ${first:-gh exited with code $code}."
