@@ -80,10 +80,19 @@ expect_absent() {
   return 0
 }
 
-# new_stub: a fresh folder of canned answers for the fake gh
+# new_stub: a fresh folder of canned answers for the fake gh, with the flags each call must carry (a wrong flag fails the call, see stub/gh.sh)
 new_stub() {
-  mktemp -d "$tmp/stub-XXXXXX"
-  return $?
+  local dir
+  dir=$(mktemp -d "$tmp/stub-XXXXXX") || return 1
+  printf '%s\n' '--repo' '--json number,url,title,body,labels,files' > "$dir/pr-view.args"
+  printf '%s\n' '--repo' '--json number,title,state,body,labels' > "$dir/issue-view.args"
+  printf '%s\n' '--repo' '--json name,description' '--limit 50' > "$dir/label-list.args"
+  printf '%s\n' '--repo' '--head' '--state open' '--json number,title,url' > "$dir/pr-list.args"
+  printf '%s\n' '--repo' '--assignee @me' '--title' '--body-file' > "$dir/pr-create.args"
+  printf '%s\n' '--json url,nameWithOwner,defaultBranchRef' > "$dir/repo-view.args"
+  printf '%s\n' '--hostname' > "$dir/api.args"
+  printf '%s\n' "$dir"
+  return 0
 }
 
 # fail_stub <stub-dir> <command> <exit-code> <stderr-text> [stdout-text]
@@ -198,7 +207,7 @@ pr_variant() {
   local name=$1 edit=$2 expr=$3 stub
   stub=$(new_stub)
   jq "$edit" "$fixtures/gh/pr-base.json" > "$stub/pr-view.out"
-  cp "$fixtures/gh/pulls.json" "$stub/api.out"
+  cp "$fixtures/gh/pulls.json" "$stub/api-pulls.out"
   run_data "$stub" pr 7 PR_DIR
   if [[ $DATA_CODE -eq 0 ]] && jq -e "$expr" "$PR_DIR/pr.json" > /dev/null; then
     report "pr/$name" ok
@@ -258,7 +267,7 @@ check "worktree/empty input" "$tmp/wt-actual.json" "$tmp/wt-expected.json"
 
 stub=$(new_stub)
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
-cp "$fixtures/gh/pulls.json" "$stub/api.out"
+cp "$fixtures/gh/pulls.json" "$stub/api-pulls.out"
 run_data "$stub" pr 7 PR_DIR
 check "pr/pr.json" "$PR_DIR/pr.json" "$fixtures/gh/pr-ok.json"
 jq 'del(.body, .files, .comments, .reviews, .statusCheckRollup)' "$fixtures/gh/pr-ok.json" > "$tmp/expected-stdout.json"
@@ -274,7 +283,7 @@ pr_variant "base commit comes from the REST answer" '.' '.baseRefOid == "base123
 # a PR URL of another repository: the base commit is read from that repository, not from --repo
 stub=$(new_stub)
 jq '.url = "https://github.example.local/x/y/pull/7"' "$fixtures/gh/pr-base.json" > "$stub/pr-view.out"
-cp "$fixtures/gh/pulls.json" "$stub/api.out"
+cp "$fixtures/gh/pulls.json" "$stub/api-pulls.out"
 run_data "$stub" pr 7 PR_DIR
 if grep -q 'repos/x/y/pulls/7' "$stub/calls.log"; then
   report "pr/base commit is read from the repository of the PR URL" ok
@@ -284,7 +293,7 @@ fi
 
 stub=$(new_stub)
 jq '.body = null' "$fixtures/gh/pr-base.json" > "$stub/pr-view.out"
-cp "$fixtures/gh/pulls.json" "$stub/api.out"
+cp "$fixtures/gh/pulls.json" "$stub/api-pulls.out"
 run_data "$stub" pr 7 PR_DIR
 expect_text "pr/null body gives an empty body.txt" "$PR_DIR/body.txt" ""
 
@@ -298,7 +307,7 @@ check "issue/issue-12.json" "$PR_DIR/issue-12.json" "$stub/issue-view.out"
 
 # alert: the reduced file and the printed line
 stub=$(new_stub)
-cp "$fixtures/gh/alert-open.json" "$stub/api.out"
+cp "$fixtures/gh/alert-open.json" "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
 expect_text "alert/stdout" "$tmp/data.out" "#3 js/sql-injection (open)"
 check "alert/alert-3.json is the reduced object" "$PR_DIR/alert-3.json" "$fixtures/gh/alert-expected.json"
@@ -308,18 +317,18 @@ for st_n in fixed:4 dismissed:5; do
   st=${st_n%%:*}
   n=${st_n##*:}
   stub=$(new_stub)
-  cp "$fixtures/gh/alert-$st.json" "$stub/api.out"
+  cp "$fixtures/gh/alert-$st.json" "$stub/api-alerts.out"
   run_data "$stub" alert "$n" PR_DIR
   expect_text "alert/state $st is printed" "$tmp/data.out" "#$n js/sql-injection ($st)"
 done
 
 stub=$(new_stub)
-jq '.state = "auto_dismissed"' "$fixtures/gh/alert-open.json" > "$stub/api.out"
+jq '.state = "auto_dismissed"' "$fixtures/gh/alert-open.json" > "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
 expect_text "alert/an unexpected state passes through" "$tmp/data.out" "#3 js/sql-injection (auto_dismissed)"
 
 stub=$(new_stub)
-cp "$fixtures/gh/alert-no-severity.json" "$stub/api.out"
+cp "$fixtures/gh/alert-no-severity.json" "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
 if jq -e '.severity == null and .ruleId == "js/unused-local"' "$PR_DIR/alert-3.json" > /dev/null 2>&1; then
   report "alert/no severity stays null" ok
@@ -328,7 +337,7 @@ else
 fi
 
 stub=$(new_stub)
-cp "$fixtures/gh/alert-no-instance.json" "$stub/api.out"
+cp "$fixtures/gh/alert-no-instance.json" "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
 if jq -e '.message == null and .path == null' "$PR_DIR/alert-3.json" > /dev/null 2>&1; then
   report "alert/no instance gives null message and path" ok
@@ -338,7 +347,7 @@ fi
 expect_text "alert/no instance still prints the line" "$tmp/data.out" "#3 js/sql-injection (open)"
 
 stub=$(new_stub)
-jq '.most_recent_instance.message.text = "quote \" backslash \\ and\nnew line"' "$fixtures/gh/alert-open.json" > "$stub/api.out"
+jq '.most_recent_instance.message.text = "quote \" backslash \\ and\nnew line"' "$fixtures/gh/alert-open.json" > "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
 if jq -e '.message == "quote \" backslash \\ and\nnew line"' "$PR_DIR/alert-3.json" > /dev/null 2>&1; then
   report "alert/a message with quotes, backslash and newline stays intact" ok
@@ -347,26 +356,26 @@ else
 fi
 
 stub=$(new_stub)
-fail_stub "$stub" api 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
+fail_stub "$stub" api-alerts 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
 run_data "$stub" alert 9 PR_DIR
 expect_error "alert/not found" 11 not_found false
 expect_empty "alert/not found writes no file" "$PR_DIR"
 
 stub=$(new_stub)
-fail_stub "$stub" api 1 "Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)" '{"message":"Advanced Security must be enabled"}'
+fail_stub "$stub" api-alerts 1 "Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)" '{"message":"Advanced Security must be enabled"}'
 run_data "$stub" alert 3 PR_DIR
 expect_error "alert/code scanning not enabled is not_found, no body on stdout" 11 not_found false
 expect_empty "alert/code scanning not enabled writes no file" "$PR_DIR"
 
 stub=$(new_stub)
-printf '%s\n' 'not json' > "$stub/api.out"
+printf '%s\n' 'not json' > "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
 expect_error "alert/unreadable response" 1 other false
 expect_empty "alert/unreadable response writes no file" "$PR_DIR"
 
 for body in 'null' '{"most_recent_instance":null}' '{"number":"x"}' ''; do
   stub=$(new_stub)
-  printf '%s' "$body" > "$stub/api.out"
+  printf '%s' "$body" > "$stub/api-alerts.out"
   run_data "$stub" alert 3 PR_DIR
   expect_error "alert/a response that is not an alert is an error: ${body:-empty}" 1 other false
   expect_empty "alert/a response that is not an alert writes no file: ${body:-empty}" "$PR_DIR"
@@ -392,7 +401,7 @@ while [[ $i -lt $count ]]; do
 done
 
 stub=$(new_stub)
-cp "$fixtures/gh/feedback-inline-pages.txt" "$stub/api.out"
+cp "$fixtures/gh/feedback-inline-pages.txt" "$stub/api-comments.out"
 SEED_PR_JSON="$fixtures/gh/feedback-view.json"
 run_data "$stub" feedback 7 PR_DIR
 SEED_PR_JSON=""
@@ -405,12 +414,37 @@ else
 fi
 
 stub=$(new_stub)
-printf '%s\n' '[]' > "$stub/api.out"
+printf '%s\n' '[]' > "$stub/api-comments.out"
 printf '%s\n' '{"comments":[],"reviews":[]}' > "$tmp/no-comments.json"
 SEED_PR_JSON="$tmp/no-comments.json"
 run_data "$stub" feedback 7 PR_DIR
 SEED_PR_JSON=""
 expect_text "feedback/no comments at all" "$tmp/data.out" "0 comments, 0 reviews, 0 inline comments"
+
+# ---- the fake gh itself ----
+
+stub=$(new_stub)
+STUB_GH_DIR="$stub" bash -c 'gh pr view 7' > "$tmp/data.out" 2> "$tmp/data.err"
+DATA_CODE=$?
+[[ $DATA_CODE -eq 97 ]] && grep -q 'lacks "--repo"' "$tmp/data.err" &&
+  report "stub/a call without a required flag fails" ok ||
+  report "stub/a call without a required flag fails" fail "exit $DATA_CODE: $(cat "$tmp/data.err")"
+
+stub=$(new_stub)
+echo default > "$stub/api.out"
+echo reviewer1 > "$stub/api-user.out"
+echo seven > "$stub/api-pulls.out"
+echo discussion > "$stub/api-comments.out"
+while IFS='|' read -r want_answer args; do
+  # shellcheck disable=SC2086
+  STUB_GH_DIR="$stub" bash -c "gh api $args" > "$tmp/data.out" 2> "$tmp/data.err"
+  expect_text "stub/api answer for: $args" "$tmp/data.out" "$want_answer"
+done << 'EOF'
+reviewer1|user --hostname h --jq .login
+seven|--hostname h repos/o/r/pulls/7
+discussion|--paginate --hostname h repos/o/r/pulls/7/comments
+default|--hostname h repos/o/r/code-scanning/alerts/3
+EOF
 
 # ---- error contract (contract.sh) ----
 # Every error class, tested once through the pr subcommand of pr-data.sh; pr-create.sh gets the same code by sourcing the file.
@@ -440,13 +474,13 @@ jq -e '.message | contains("something odd happened")' "$tmp/data.err" > /dev/nul
 # the PR was read, the base commit call fails: nothing is written
 stub=$(new_stub)
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
-fail_stub "$stub" api 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
+fail_stub "$stub" api-pulls 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
 run_data "$stub" pr 7 PR_DIR
 expect_error "pr/base commit call fails" 11 not_found false
 expect_empty "pr/base commit call fails leaves no file" "$PR_DIR"
 
 stub=$(new_stub)
-fail_stub "$stub" api 1 "error connecting to github.example.local"
+fail_stub "$stub" api-pulls 1 "error connecting to github.example.local"
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
 run_data "$stub" pr 7 PR_DIR
 expect_error "pr/network error on the base commit call" 13 network true
@@ -465,7 +499,7 @@ expect_error "feedback/no pr.json" 1 other false
 
 # The page fetch fails and jq on empty input would accept it: must still fail, with no feedback file
 stub=$(new_stub)
-fail_stub "$stub" api 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
+fail_stub "$stub" api-comments 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
 SEED_PR_JSON="$fixtures/gh/feedback-view.json"
 run_data "$stub" feedback 7 PR_DIR
 SEED_PR_JSON=""
@@ -486,7 +520,7 @@ done
 for good_pr_arg in 7 https://github.example.local/o/r/pull/7; do
   good_stub=$(new_stub)
   cp "$fixtures/gh/pr-base.json" "$good_stub/pr-view.out"
-  cp "$fixtures/gh/pulls.json" "$good_stub/api.out"
+  cp "$fixtures/gh/pulls.json" "$good_stub/api-pulls.out"
   run_data "$good_stub" pr "$good_pr_arg" PR_DIR
   [[ $DATA_CODE -eq 0 ]] && report "pr/argument '$good_pr_arg' is accepted" ok ||
     report "pr/argument '$good_pr_arg' is accepted" fail "exit $DATA_CODE: $(cat "$tmp/data.err")"
@@ -669,7 +703,7 @@ done
 stub=$(new_stub)
 work=$(mktemp -d "$tmp/work-XXXXXX")
 printf '%s\n' '{"host":"other.example.org","repoUrl":"https://other.example.org/x/y","repoPath":"x/y"}' > "$work/preflight.json"
-cp "$fixtures/gh/alert-open.json" "$stub/api.out"
+cp "$fixtures/gh/alert-open.json" "$stub/api-alerts.out"
 run_stub "$stub" "$script" alert 3 "$work"
 expect_call "preflight.json/alert uses the host from the file" "$stub" "--hostname other.example.org"
 expect_call "preflight.json/alert uses the repository path from the file" "$stub" "repos/x/y/code-scanning/alerts/3"
@@ -1163,7 +1197,7 @@ git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
 pf_stub() {
   local dir
   dir=$(new_stub)
-  echo reviewer1 > "$dir/api.out"
+  echo reviewer1 > "$dir/api-user.out"
   echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":{"name":"main"}}' > "$dir/repo-view.out"
   printf '%s\n' "$dir"
   return 0
@@ -1223,7 +1257,7 @@ expect_error_message "preflight/unknown remote, message" "No remote named nowher
 expect_no_pr_folder "preflight/unknown remote makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
-fail_stub "$stub" api 4 "authentication required"
+fail_stub "$stub" api-user 4 "authentication required"
 pf_run "$stub" "$pf_case_tmp" review-pr origin
 expect_error "preflight/auth failure" 10 auth false
 expect_error_message "preflight/auth failure, hint names the skill" '`/review-pr`'
@@ -1274,7 +1308,7 @@ else
   report "preflight/a password in the remote URL is dropped everywhere" fail "exit $DATA_CODE: $(cat "$tmp/data.out") $(cat "$tmp/data.err")"
 fi
 stub=$(new_stub)
-echo reviewer1 > "$stub/api.out"
+echo reviewer1 > "$stub/api-user.out"
 fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository (repository)"
 STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
 if [[ $DATA_CODE -eq 11 ]] && ! grep -q SECRET "$tmp/data.err"; then
@@ -1342,6 +1376,7 @@ expect_error_message "load_preflight/a file that is not JSON, message" "Cannot r
 # every gh error class ends with the skill as a command when a skill is known, and with the plain hint otherwise
 while IFS='|' read -r label gh_exit stderr_text; do
   stub=$(new_stub)
+  rm -f "$stub/pr-view.args" # this call is a bare run_gh, not one of the scripts' calls
   fail_stub "$stub" pr-view "$gh_exit" "$stderr_text"
   TEST_SKILL=create-pr run_stub "$stub" "$tmp/contract-call.sh" run_gh "the PR" pr view 1
   jq -e '.message | endswith("then re-run `/create-pr`.")' "$tmp/data.err" > /dev/null 2>&1 &&
