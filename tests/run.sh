@@ -1246,6 +1246,8 @@ pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error "preflight/usage: one argument" 2 usage false
 pf_run "$stub" "$pf_case_tmp" create-pr origin extra
 expect_error "preflight/usage: three arguments" 2 usage false
+expect_error_message "preflight/usage: the message names the script and its arguments, nothing else" \
+  "Wrong arguments. Usage: preflight.sh <skill> <remote>, see the header of the script."
 expect_no_pr_folder "preflight/usage errors make no folder" "$pf_case_tmp"
 
 # a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
