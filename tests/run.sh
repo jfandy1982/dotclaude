@@ -465,8 +465,21 @@ forbidden without rate limit|1|gh: Forbidden (HTTP 403)|11|not_found|false
 rate limit|1|gh: API rate limit exceeded (HTTP 403)|12|rate_limited|true
 network|1|error connecting to github.example.local|13|network|true
 unknown error|1|something odd happened|1|other|false
+auth by the gh auth login hint|1|To get started with GitHub CLI, please run: gh auth login|10|auth|false
+not found, HTTP 410|1|gh: Gone (HTTP 410)|11|not_found|false
+not found, no pull requests|1|no pull requests found for branch x|11|not_found|false
+secondary rate limit|1|You have exceeded a secondary rate limit (HTTP 403)|12|rate_limited|true
+rate limit by HTTP 429|1|gh: Too Many Requests (HTTP 429)|12|rate_limited|true
+network, no such host|1|lookup github.example.local: no such host|13|network|true
+network, dial tcp|1|dial tcp 10.0.0.1:443: i/o failure|13|network|true
+network, timeout|1|request failed: timeout|13|network|true
+network, connection refused|1|connection refused|13|network|true
+network, could not resolve host|1|Could not resolve host: github.example.local|13|network|true
 EOF
 
+stub=$(new_stub)
+fail_stub "$stub" pr-view 1 "something odd happened"
+run_data "$stub" pr 7 PR_DIR
 jq -e '.message | contains("something odd happened")' "$tmp/data.err" > /dev/null &&
   report "pr/unknown error shows the first line of gh" ok ||
   report "pr/unknown error shows the first line of gh" fail "$(cat "$tmp/data.err")"

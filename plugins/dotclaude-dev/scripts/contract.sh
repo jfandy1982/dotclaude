@@ -57,7 +57,7 @@ fail() {
   if [[ $code -eq 4 ]] || grep -qiE 'HTTP 401|gh auth login' "$ERR_FILE"; then
     emit_error auth 10 false "$what" "Not authenticated with $HOST. Run \`gh auth login --hostname $HOST\`, then $(rerun)."
   fi
-  if grep -qi 'rate limit' "$ERR_FILE"; then
+  if grep -qiE 'rate limit|HTTP 429' "$ERR_FILE"; then
     emit_error rate_limited 12 true "$what" "Could not $VERB $what: GitHub rate limit reached. Wait a few minutes, then $(rerun)."
   fi
   if grep -qiE 'could not resolve to|no pull requests found|not found|HTTP 40[34]|HTTP 410' "$ERR_FILE"; then
