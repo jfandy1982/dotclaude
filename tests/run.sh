@@ -82,13 +82,13 @@ expect_absent() {
 
 # new_stub: a fresh folder of canned answers for the fake gh, with the flags each call must carry (a wrong flag fails the call, see stub/gh.sh)
 new_stub() {
-  local dir
+  local dir repo_flag='--repo'
   dir=$(mktemp -d "$tmp/stub-XXXXXX") || return 1
-  printf '%s\n' '--repo' '--json number,url,title,body,labels,files' > "$dir/pr-view.args"
-  printf '%s\n' '--repo' '--json number,title,state,body,labels' > "$dir/issue-view.args"
-  printf '%s\n' '--repo' '--json name,description' '--limit 50' > "$dir/label-list.args"
-  printf '%s\n' '--repo' '--head' '--state open' '--json number,title,url' > "$dir/pr-list.args"
-  printf '%s\n' '--repo' '--assignee @me' '--title' '--body-file' > "$dir/pr-create.args"
+  printf '%s\n' "$repo_flag" '--json number,url,title,body,labels,files' > "$dir/pr-view.args"
+  printf '%s\n' "$repo_flag" '--json number,title,state,body,labels' > "$dir/issue-view.args"
+  printf '%s\n' "$repo_flag" '--json name,description' '--limit 50' > "$dir/label-list.args"
+  printf '%s\n' "$repo_flag" '--head' '--state open' '--json number,title,url' > "$dir/pr-list.args"
+  printf '%s\n' "$repo_flag" '--assignee @me' '--title' '--body-file' > "$dir/pr-create.args"
   printf '%s\n' '--json url,nameWithOwner,defaultBranchRef' > "$dir/repo-view.args"
   printf '%s\n' '--hostname' > "$dir/api.args"
   printf '%s\n' "$dir"
