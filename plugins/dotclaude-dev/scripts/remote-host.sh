@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host of a git remote, cut offline from its URL.
 #   remote-host.sh <remote>
-#       prints two lines: the URL of the remote and its host
+#       prints two lines: the URL of the remote (without user and password when it is http or https) and its host
 #   remote-host.sh --url <url>
 #       prints the host of the URL
 # Understands https://, http://, git@host:path, ssh://git@host:port/path and user@ in an https URL.
@@ -32,6 +32,8 @@ main() {
        ;;
     *) usage ;;
   esac
+  # user and password of an http(s) URL can be a token: they never leave this script (the user of an ssh URL is no secret)
+  url=$(printf '%s\n' "$url" | sed -E 's#^(https?://)[^/]*@#\1#')
   host=$(host_of "$url")
   [[ -n $host ]] || die "remote host" "Cannot read a host from the URL $url."
   [[ $count -eq 2 ]] || printf '%s\n' "$url"

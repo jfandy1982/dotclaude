@@ -509,6 +509,25 @@ expect_text "remote-host/URL and host of a remote" "$tmp/data.out" $'git@github.
 PLAIN_DIR="$scratch" run_plain "$host_script" nowhere
 expect_error "remote-host/remote does not exist" 1 other false
 
+# credentials in an http(s) URL never reach stdout or an error line; the user of an ssh URL is not a secret and stays
+cred_repo=$(mktemp -d "$tmp/repo-XXXXXX")
+git init -q "$cred_repo"
+git -C "$cred_repo" remote add origin https://user:SECRET@github.example.local/o/r.git
+PLAIN_DIR="$cred_repo" run_plain "$host_script" origin
+expect_text "remote-host/user and password are dropped from the URL" "$tmp/data.out" $'https://github.example.local/o/r.git\ngithub.example.local'
+git -C "$cred_repo" remote set-url origin https://SECRET@github.example.local/o/r.git
+PLAIN_DIR="$cred_repo" run_plain "$host_script" origin
+expect_text "remote-host/a token as the user is dropped from the URL" "$tmp/data.out" $'https://github.example.local/o/r.git\ngithub.example.local'
+git -C "$cred_repo" remote set-url origin ssh://git@github.example.local:2222/o/r.git
+PLAIN_DIR="$cred_repo" run_plain "$host_script" origin
+expect_text "remote-host/the user of an ssh URL stays" "$tmp/data.out" $'ssh://git@github.example.local:2222/o/r.git\ngithub.example.local'
+run_plain "$host_script" --url "https://user:SECRET@/x"
+if [[ $DATA_CODE -eq 1 ]] && ! grep -q SECRET "$tmp/data.err"; then
+  report "remote-host/the error for a URL without host does not show the password" ok
+else
+  report "remote-host/the error for a URL without host does not show the password" fail "exit $DATA_CODE: $(cat "$tmp/data.err")"
+fi
+
 # ---- pr-create.sh ----
 
 create_script="$root/plugins/dotclaude-dev/scripts/pr-create.sh"
@@ -1191,6 +1210,30 @@ expect_error "preflight/usage: one argument" 2 usage false
 pf_run "$stub" "$pf_case_tmp" create-pr origin extra
 expect_error "preflight/usage: three arguments" 2 usage false
 expect_no_pr_folder "preflight/usage errors make no folder" "$pf_case_tmp"
+
+# a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
+pf_cred_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
+git -C "$pf_cred_repo" init -q
+git -C "$pf_cred_repo" remote add origin https://user:SECRET@github.example.local/o/r.git
+pf_cred_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
+stub=$(pf_stub)
+STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
+pf_dir=$(jq -r '.prDir' "$tmp/data.out")
+if [[ $DATA_CODE -eq 0 ]] && ! grep -rq SECRET "$tmp/data.out" "$tmp/data.err" "$pf_dir" "$stub/calls.log" &&
+  jq -e '.remoteUrl == "https://github.example.local/o/r.git"' "$pf_dir/preflight.json" > /dev/null; then
+  report "preflight/a password in the remote URL is dropped everywhere" ok
+else
+  report "preflight/a password in the remote URL is dropped everywhere" fail "exit $DATA_CODE: $(cat "$tmp/data.out") $(cat "$tmp/data.err")"
+fi
+stub=$(new_stub)
+echo reviewer1 > "$stub/api.out"
+fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository (repository)"
+STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
+if [[ $DATA_CODE -eq 11 ]] && ! grep -q SECRET "$tmp/data.err"; then
+  report "preflight/a password in the remote URL is dropped from the error line" ok
+else
+  report "preflight/a password in the remote URL is dropped from the error line" fail "exit $DATA_CODE: $(cat "$tmp/data.err")"
+fi
 
 # ---- contract.sh: require_repo, load_preflight, the skill hint ----
 
