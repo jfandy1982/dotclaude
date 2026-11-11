@@ -9,11 +9,14 @@ def cells: trim | ltrimstr("|") | sub("(?<!\\\\)\\|$"; "") | split("(?<!\\\\)\\|
 # one pattern piece: trimmed, a leading and a trailing backtick removed (also when one pair wraps a comma list), one leading ./ removed
 def clean: trim | sub("^`"; "") | sub("`$"; "") | trim | ltrimstr("./");
 # the lines outside fenced code blocks (``` or ~~~): a heading or table shown as an example is not the checklist
+# a fence is closed only by a bare line of the same character that is at least as long as the opening one
 def outside_fences:
-  reduce .[] as $line ({fenced: false, out: []};
-    if ($line | test("^\\s*(```|~~~)")) then .fenced |= not
-    elif .fenced then .
-    else .out += [$line] end)
+  reduce .[] as $line ({fence: null, out: []};
+    ([$line | capture("^\\s*(?<m>`{3,}|~{3,})(?<rest>.*)$")] | first) as $f
+    | if .fence == null then
+        if $f != null then .fence = $f.m else .out += [$line] end
+      elif $f != null and ($f.rest | test("^\\s*$")) and $f.m[:1] == .fence[:1] and ($f.m | length) >= (.fence | length) then .fence = null
+      else . end)
   | .out;
 
 (split("\n") | map(rtrimstr("\r")) | outside_fences) as $lines

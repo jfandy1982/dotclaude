@@ -1,4 +1,4 @@
-# Error contract of the scripts that call gh or git (pr-data.sh, pr-create.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
+# Error contract of the scripts that call gh or git (preflight.sh, pr-data.sh, pr-create.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
 # The sourcing script sets SCRIPT and SUBCOMMANDS (for the usage message) and may set VERB (default "read", "create" for writes).
 # On failure: nothing on stdout, one JSON line on stderr {error, exit, retryable, what, message}
 # and a fixed exit code: 10 auth, 11 not_found, 12 rate_limited, 13 network, 1 other, 2 usage.
@@ -46,7 +46,7 @@ rerun() {
 }
 
 usage() {
-  emit_error usage 2 false "arguments" "Wrong arguments. Usage: $SCRIPT $SUBCOMMANDS <arguments>, see the header of the script."
+  emit_error usage 2 false "arguments" "Wrong arguments. Usage: $SCRIPT $SUBCOMMANDS, see the header of the script."
   return 0
 }
 
@@ -57,13 +57,20 @@ fail() {
   if [[ $code -eq 4 ]] || grep -qiE 'HTTP 401|gh auth login' "$ERR_FILE"; then
     emit_error auth 10 false "$what" "Not authenticated with $HOST. Run \`gh auth login --hostname $HOST\`, then $(rerun)."
   fi
-  if grep -qi 'rate limit' "$ERR_FILE"; then
+  if grep -qiE 'rate limit|HTTP 429' "$ERR_FILE"; then
     emit_error rate_limited 12 true "$what" "Could not $VERB $what: GitHub rate limit reached. Wait a few minutes, then $(rerun)."
   fi
   if grep -qiE 'could not resolve to|no pull requests found|not found|HTTP 40[34]|HTTP 410' "$ERR_FILE"; then
+    if [[ $VERB == create ]]; then
+      emit_error not_found 11 false "$what" "Could not $VERB $what: something it needs was not found, or you have no access. Check the labels, the branch and your access to the repository, then $(rerun)."
+    fi
     emit_error not_found 11 false "$what" "Could not $VERB $what: not found, or you have no access. Check the number and your access to the repository, then $(rerun)."
   fi
   if grep -qiE 'error connecting to|no such host|could not resolve host|timeout|dial tcp|connection refused' "$ERR_FILE"; then
+    # shortcut: a timeout after GitHub accepted the request would make a re-run create a second PR; whether gh can time out that way is unverified, so a create is never retryable
+    if [[ $VERB == create ]]; then
+      emit_error network 13 false "$what" "Could not $VERB $what: cannot reach $HOST. The PR may have been created anyway: check \`gh pr list --head <branch>\` before you $(rerun)."
+    fi
     emit_error network 13 true "$what" "Could not $VERB $what: cannot reach $HOST. Check the connection, then $(rerun)."
   fi
   emit_error other 1 false "$what" "Could not $VERB $what: ${first:-gh exited with code $code}."
@@ -96,8 +103,9 @@ run_git() {
 write_file() {
   local dir=$1 name=$2 content=$3 tmp
   [[ -d $dir ]] || die "$name" "Folder $dir does not exist."
-  tmp=$(mktemp "$dir/.tmp-XXXXXX") || die "$name" "Cannot write to $dir."
-  if printf '%s\n' "$content" > "$tmp" && mv "$tmp" "$dir/$name"; then
+  # the tools' own error text stays out of stderr: the contract is one JSON line there
+  tmp=$(mktemp "$dir/.tmp-XXXXXX" 2> /dev/null) || die "$name" "Cannot write to $dir."
+  if printf '%s\n' "$content" 2> /dev/null > "$tmp" && mv "$tmp" "$dir/$name" 2> /dev/null; then
     return 0
   fi
   rm -f "$tmp"

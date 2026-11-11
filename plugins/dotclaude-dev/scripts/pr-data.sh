@@ -2,6 +2,7 @@
 # GitHub reads of review-pr behind one error contract.
 # Host, repository URL and repository path come from <pr-dir>/preflight.json (written by preflight.sh).
 #   pr-data.sh pr <pr-arg> <pr-dir>
+#       <pr-arg> is a PR number or a URL (http:// or https://), anything else is a usage error;
 #       one gh pr view with all PR fields (including CI rollup, comments, reviews) plus the base commit;
 #       writes <pr-dir>/pr.json and <pr-dir>/body.txt, prints pr.json without the bulky fields
 #   pr-data.sh issue <issue-number> <pr-dir>
@@ -32,6 +33,8 @@ require_pr_json() {
 
 cmd_pr() {
   local pr_arg=$1 dir=$2 json body repo_path number base
+  # only a number or a URL: anything else (--web, a branch name, #42) would reach gh as a flag or a different lookup
+  [[ $pr_arg =~ ^[0-9]+$ || $pr_arg =~ ^https?:// ]] || usage
   load_preflight "$dir"
   run_gh "PR $pr_arg" pr view "$pr_arg" --repo "$REPO_URL" \
     --json number,url,title,body,labels,files,author,state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles,statusCheckRollup,comments,reviews

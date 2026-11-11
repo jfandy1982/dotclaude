@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The diff of the current branch against <remote>/<default-branch> (merge-base), in three levels for create-pr.
 #   branch-diff.sh files <remote> <default-branch> <pr-dir>
+#       one call per <pr-dir>: stops with an error when <pr-dir>/diff exists already (nothing is deleted);
 #       writes <pr-dir>/diff/NNN.diff for every file that gets a diff (NNN = 001, 002, ... in git's file order) and prints
 #       a one-line JSON array [{path, renamedFrom, added, removed, generated, diff}]:
 #       added/removed are null for binary files, diff is the path of the diff file or null;
@@ -50,14 +51,17 @@ is_generated() {
 
 # shortcut: several processes per file (about 15 ms, 1000 files took about 15 s), fine up to a few hundred; batch check-attr and jq beyond that
 cmd_files() {
-  local remote=$1 base=$2 dir=$3 tok rest added removed path old number=0 name content entries="" top generated diff_path entry
+  local remote=$1 base=$2 dir=$3 tok rest added removed path old number=0 name content entries="" top generated diff_path entry listing
+  require_repo
   [[ -d $dir ]] || die "diff folder" "Folder $dir does not exist."
+  # one call per folder: the script never deletes, so a second call would mix its files with the first run's
+  [[ ! -e $dir/diff ]] || die "diff folder" "Folder $dir already has diff/. Every run gets its own folder from preflight.sh, so $(rerun)."
   set_range "$remote" "$base"
-  mkdir -p "$dir/diff" || die "diff folder" "Cannot create $dir/diff."
+  mkdir "$dir/diff" || die "diff folder" "Cannot create $dir/diff."
   top=$(run_git "repository root" rev-parse --show-toplevel) || exit $?
   # the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file in the folder
-  LISTING="$dir/changed-files.list"
-  run_git "changed files of $RANGE" diff "$RANGE" --numstat -z -M > "$LISTING"
+  listing="$dir/changed-files.list"
+  run_git "changed files of $RANGE" diff "$RANGE" --numstat -z -M > "$listing"
   while IFS= read -r -d '' tok; do
     added=${tok%%$'\t'*}
     rest=${tok#*$'\t'}
@@ -85,13 +89,14 @@ cmd_files() {
        removed: (if $removed == "-" then null else ($removed | tonumber) end),
        generated: ($generated == "yes"), diff: (if $diff == "" then null else $diff end)}') || die "table entry of $path" "Cannot build the table entry."
     entries+=$entry$'\n'
-  done < "$LISTING"
+  done < "$listing"
   printf '%s' "$entries" | jq -sc '.'
   return 0
 }
 
 cmd_file() {
   local remote=$1 base=$2 path=$3 old=${4:-}
+  require_repo
   set_range "$remote" "$base"
   file_diff "$path" "${old:-$path}"
   return 0
