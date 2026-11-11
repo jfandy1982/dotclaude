@@ -66,6 +66,8 @@ main() {
     while IFS= read -r pattern; do
       specs+=(":(top,glob)$pattern")
     done < <(printf '%s' "$row" | jq -r '.patterns[]')
+    # the parser drops rows without patterns; without this guard an empty array would break bash 3.2 under set -u, and git without a pathspec matches every changed file
+    [[ ${#specs[@]} -gt 0 ]] || continue
     # the exit code of git diff does not tell a match from none: the output does
     out=$(run_git "changed files of $RANGE" -C "$top" diff "$RANGE" --name-only --no-renames -- "${specs[@]}") ||
       exit $?
