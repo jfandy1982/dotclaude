@@ -493,6 +493,8 @@ https://github.example.local/org/repo.git|github.example.local
 git@github.example.local:org/repo.git|github.example.local
 ssh://git@github.example.local:2222/org/repo.git|github.example.local
 https://user@github.example.local/org/repo|github.example.local
+HTTPS://GitHub.com/o/r|GitHub.com
+SSH://git@github.example.local:2222/o/r.git|github.example.local
 EOF
 
 run_plain "$host_script" --url "https:///x"
@@ -521,6 +523,9 @@ expect_text "remote-host/a token as the user is dropped from the URL" "$tmp/data
 git -C "$cred_repo" remote set-url origin ssh://git@github.example.local:2222/o/r.git
 PLAIN_DIR="$cred_repo" run_plain "$host_script" origin
 expect_text "remote-host/the user of an ssh URL stays" "$tmp/data.out" $'ssh://git@github.example.local:2222/o/r.git\ngithub.example.local'
+git -C "$cred_repo" remote set-url origin HTTPS://user:SECRET@GitHub.com/o/r.git
+PLAIN_DIR="$cred_repo" run_plain "$host_script" origin
+expect_text "remote-host/the password is dropped from an upper-case scheme too" "$tmp/data.out" $'HTTPS://GitHub.com/o/r.git\nGitHub.com'
 run_plain "$host_script" --url "https://user:SECRET@/x"
 if [[ $DATA_CODE -eq 1 ]] && ! grep -q SECRET "$tmp/data.err"; then
   report "remote-host/the error for a URL without host does not show the password" ok

@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 # host_of <url>: prints the host, nothing when there is none
 host_of() {
   local url=$1
-  printf '%s\n' "$url" | sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*##'
+  printf '%s\n' "$url" | sed -E 's#^[A-Za-z+]+://##; s#^[^@/]*@##; s#[:/].*##'
   return 0
 }
 
@@ -33,7 +33,7 @@ main() {
     *) usage ;;
   esac
   # user and password of an http(s) URL can be a token: they never leave this script (the user of an ssh URL is no secret)
-  url=$(printf '%s\n' "$url" | sed -E 's#^(https?://)[^/]*@#\1#')
+  url=$(printf '%s\n' "$url" | sed -E 's#^([Hh][Tt][Tt][Pp][Ss]?://)[^/]*@#\1#')
   host=$(host_of "$url")
   [[ -n $host ]] || die "remote host" "Cannot read a host from the URL $url."
   [[ $count -eq 2 ]] || printf '%s\n' "$url"
