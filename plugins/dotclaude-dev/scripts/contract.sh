@@ -103,8 +103,9 @@ run_git() {
 write_file() {
   local dir=$1 name=$2 content=$3 tmp
   [[ -d $dir ]] || die "$name" "Folder $dir does not exist."
-  tmp=$(mktemp "$dir/.tmp-XXXXXX") || die "$name" "Cannot write to $dir."
-  if printf '%s\n' "$content" > "$tmp" && mv "$tmp" "$dir/$name"; then
+  # the tools' own error text stays out of stderr: the contract is one JSON line there
+  tmp=$(mktemp "$dir/.tmp-XXXXXX" 2> /dev/null) || die "$name" "Cannot write to $dir."
+  if printf '%s\n' "$content" 2> /dev/null > "$tmp" && mv "$tmp" "$dir/$name" 2> /dev/null; then
     return 0
   fi
   rm -f "$tmp"

@@ -1386,6 +1386,48 @@ run_plain "$tmp/contract-call.sh" load_preflight "$lp_bad"
 expect_error "load_preflight/a file that is not JSON" 1 other false
 expect_error_message "load_preflight/a file that is not JSON, message" "Cannot read"
 
+# write_file: the file holds the content, a failed write ends in the contract error and leaves no partial file behind
+# expect_no_tmp <name> <dir>: no .tmp-* file left from write_file
+expect_no_tmp() {
+  local name=$1 dir=$2 left
+  left=$(ls -A "$dir" | grep '^\.tmp-' || true)
+  if [[ -z $left ]]; then
+    report "$name" ok
+  else
+    report "$name" fail "left: $left"
+  fi
+  return 0
+}
+
+wf_dir=$(mktemp -d "$tmp/wf-XXXXXX")
+run_plain "$tmp/contract-call.sh" write_file "$wf_dir" out.txt "hello"
+expect_text "write_file/writes the content" "$wf_dir/out.txt" "hello"
+expect_no_tmp "write_file/leaves no temporary file" "$wf_dir"
+run_plain "$tmp/contract-call.sh" write_file "$wf_dir" out.txt "second"
+expect_text "write_file/replaces an existing file" "$wf_dir/out.txt" "second"
+
+run_plain "$tmp/contract-call.sh" write_file "$tmp/no-such-wf-folder" out.txt "x"
+expect_error "write_file/missing folder" 1 other false
+expect_error_message "write_file/missing folder, message" "does not exist"
+
+# the temporary file is made, but moving it to the final name fails: the temporary file is removed again
+run_plain "$tmp/contract-call.sh" write_file "$wf_dir" "no-such-sub/out.txt" "x"
+expect_error "write_file/the move to the final name fails" 1 other false
+expect_error_message "write_file/the move to the final name fails, message" "Cannot write"
+expect_no_tmp "write_file/a failed move leaves no temporary file" "$wf_dir"
+
+if [[ $(id -u) -eq 0 ]]; then
+  echo "skip  write_file/read-only folder (root ignores folder permissions)"
+else
+  wf_ro=$(mktemp -d "$tmp/wf-XXXXXX")
+  chmod 500 "$wf_ro"
+  run_plain "$tmp/contract-call.sh" write_file "$wf_ro" out.txt "x"
+  chmod 700 "$wf_ro"
+  expect_error "write_file/read-only folder" 1 other false
+  expect_error_message "write_file/read-only folder, message" "Cannot write to"
+  expect_absent "write_file/read-only folder writes nothing" "$wf_ro/out.txt"
+fi
+
 # every gh error class ends with the skill as a command when a skill is known, and with the plain hint otherwise
 while IFS='|' read -r label gh_exit stderr_text; do
   stub=$(new_stub)
