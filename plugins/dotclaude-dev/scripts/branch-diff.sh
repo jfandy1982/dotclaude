@@ -52,6 +52,7 @@ is_generated() {
 # shortcut: several processes per file (about 15 ms, 1000 files took about 15 s), fine up to a few hundred; batch check-attr and jq beyond that
 cmd_files() {
   local remote=$1 base=$2 dir=$3 tok rest added removed path old number=0 name content entries="" top generated diff_path entry listing
+  require_repo
   [[ -d $dir ]] || die "diff folder" "Folder $dir does not exist."
   # one call per folder: the script never deletes, so a second call would mix its files with the first run's
   [[ ! -e $dir/diff ]] || die "diff folder" "Folder $dir already has diff/. Every run gets its own folder from preflight.sh, so $(rerun)."
@@ -95,6 +96,7 @@ cmd_files() {
 
 cmd_file() {
   local remote=$1 base=$2 path=$3 old=${4:-}
+  require_repo
   set_range "$remote" "$base"
   file_diff "$path" "${old:-$path}"
   return 0

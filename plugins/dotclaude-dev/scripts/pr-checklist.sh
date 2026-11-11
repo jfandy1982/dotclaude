@@ -45,6 +45,7 @@ main() {
   [[ $# -eq 2 ]] || usage
   local remote=$1 base=$2 top parsed state row item pattern out items="[]"
   local -a specs
+  require_repo
   top=$(run_git "repository root" rev-parse --show-toplevel) || exit $?
   if [[ ! -f $top/CLAUDE.md ]]; then
     printf '%s\n' '{"state":"none","items":[]}'

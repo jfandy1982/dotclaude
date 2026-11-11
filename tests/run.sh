@@ -1144,10 +1144,13 @@ expect_error_message "run_git/branch-diff files: the message carries git's reaso
 rg_bare=$(mktemp -d "$tmp/bare-XXXXXX")
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$checklist_script" origin main
 expect_error "run_git/pr-checklist: outside a repository" 1 other false
-expect_error_message "run_git/pr-checklist: outside a repository, git's reason" "not a git repository"
+expect_error_message "require_repo/pr-checklist: outside a repository, the contract wording" "Not inside a git repository"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$(mktemp -d "$tmp/folder-XXXXXX")"
 expect_error "run_git/branch-diff files: outside a repository" 1 other false
-expect_error_message "run_git/branch-diff files: outside a repository, git's reason" "not a git repository"
+expect_error_message "require_repo/branch-diff files: outside a repository, the contract wording" "Not inside a git repository"
+LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" file origin main base.txt
+expect_error "require_repo/branch-diff file: outside a repository" 1 other false
+expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "Not inside a git repository"
 
 # ---- preflight.sh ----
 
