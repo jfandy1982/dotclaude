@@ -475,6 +475,22 @@ expect_absent "feedback/page fetch fails leaves no feedback.json" "$PR_DIR/feedb
 stub=$(new_stub)
 run_data "$stub" pr 7
 expect_error "usage/too few arguments" 2 usage false
+for bad_pr_arg in --web '#42' abc '' 'feature/x' '-1'; do
+  bad_stub=$(new_stub)
+  run_data "$bad_stub" pr "$bad_pr_arg" PR_DIR
+  expect_error "usage/pr argument '$bad_pr_arg' is neither a number nor a URL" 2 usage false
+  [[ ! -f $bad_stub/calls.log ]] && report "usage/pr argument '$bad_pr_arg' never reaches gh" ok ||
+    report "usage/pr argument '$bad_pr_arg' never reaches gh" fail "$(cat "$bad_stub/calls.log")"
+done
+# a number and a PR URL are the two accepted forms
+for good_pr_arg in 7 https://github.example.local/o/r/pull/7; do
+  good_stub=$(new_stub)
+  cp "$fixtures/gh/pr-base.json" "$good_stub/pr-view.out"
+  cp "$fixtures/gh/pulls.json" "$good_stub/api.out"
+  run_data "$good_stub" pr "$good_pr_arg" PR_DIR
+  [[ $DATA_CODE -eq 0 ]] && report "pr/argument '$good_pr_arg' is accepted" ok ||
+    report "pr/argument '$good_pr_arg' is accepted" fail "exit $DATA_CODE: $(cat "$tmp/data.err")"
+done
 run_data "$stub" issue abc PR_DIR
 expect_error "usage/issue number is not a number" 2 usage false
 run_data "$stub" feedback abc PR_DIR
