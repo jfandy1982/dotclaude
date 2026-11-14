@@ -1,5 +1,5 @@
 # Adds "uncovered" to the result of pr-body-parse.jq: the changed paths of the file table that no entry of the File risk section names.
-# Usage: jq -c --argjson table "$(cat file-table.json)" -f pr-body-coverage.jq < parsed.json   ($table is the file table)
+# Usage: jq -c --slurpfile table file-table.json -f pr-body-coverage.jq < parsed.json   ($table[0] is the file table; a file, not --argjson, because a large table would exceed the size of one argument)
 # An entry names a path in one of three forms (references/pr-body.md): the path itself, a directory ending in "/"
 # (everything below it) or a pattern with one {a,b} group (the expansions). Entries for unchanged files are ignored.
 # jq 1.6 compatible.
@@ -14,4 +14,4 @@ def covers($entry; $path):
   else $entry == $path end;
 
 ([.fileRisk.Critical[], .fileRisk.Medium[], .fileRisk.Low[]] | map(entry_path)) as $entries
-| . + {uncovered: [$table[].path | . as $p | select(any($entries[]; covers(.; $p)) | not)]}
+| . + {uncovered: [$table[0][].path | . as $p | select(any($entries[]; covers(.; $p)) | not)]}

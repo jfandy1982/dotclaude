@@ -47,6 +47,8 @@ main() {
   [[ -n $default_branch ]] || die "repository $remote_url" "The repository has no default branch."
   [[ $skill != create-pr || $branch != "$default_branch" ]] ||
     die "branch" "Branch $branch is the default branch — create a feature branch first, then $(rerun)."
+  [[ $skill != create-pr || $remote_branch != "$default_branch" ]] ||
+    die "branch" "Branch $branch tracks the default branch $default_branch on $remote. Push it under its own name (\`git push -u $remote $branch\`), then $(rerun)."
   dir=$(mktemp -d "$TEMP_BASE/$skill-XXXXXX" 2> "$ERR_FILE") ||
     die "temporary folder" "Cannot create a temporary folder in $TEMP_BASE: $(head -n 1 "$ERR_FILE"). Make it writable for your user or set TMPDIR to another folder, then $(rerun)."
   json=$(printf '%s' "$repo" | jq -c --arg skill "$skill" --arg remote "$remote" --arg remoteUrl "$remote_url" --arg host "$host" \

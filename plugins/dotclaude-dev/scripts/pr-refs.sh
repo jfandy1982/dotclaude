@@ -2,7 +2,7 @@
 # Fetches what a review of a PR needs from git and finds its merge base.
 #   pr-refs.sh <pr-dir>
 #       reads number, headRefOid and baseRefName from <pr-dir>/pr.json and the remote from <pr-dir>/preflight.json, then
-#       fetches the PR head (pull/<number>/head), checks that the commit pr.json names is part of it (it is not after a force-push),
+#       fetches the PR head (pull/<number>/head), checks that the commit pr.json names is part of it, i.e. reachable from the fetched head (it is not after a force-push),
 #       fetches the base branch to refs/remotes/<remote>/<base> and prints {mergeBase}: the commit the PR was cut from,
 #       seen from the base branch as it is now (what GitHub shows). The checked-out branch and the working tree stay as they are.
 # The values come from pr.json and are checked here (number, commit id, ref name), so no text from the PR ever reaches a shell command in the skill.
@@ -31,7 +31,8 @@ main() {
   git check-ref-format "refs/heads/$base" 2> /dev/null || die "$pr_file" "$dir/$pr_file has no usable base branch name."
   VERB=fetch
   run_git "the head of PR $number from $remote" fetch "$remote" "pull/$number/head"
-  [[ $(git cat-file -t "$head" 2> /dev/null) == commit ]] ||
+  # not just "the commit exists": an old head that is still in the local object store must not pass
+  git merge-base --is-ancestor "$head" FETCH_HEAD 2> /dev/null ||
     die "head of PR $number" "PR $number was force-pushed after its data was fetched: commit $head is gone. Please $(rerun)."
   run_git "base branch $base from $remote" fetch "$remote" "+refs/heads/$base:refs/remotes/$remote/$base"
   merge_base=$(git merge-base "$head" "refs/remotes/$remote/$base" 2> /dev/null) ||

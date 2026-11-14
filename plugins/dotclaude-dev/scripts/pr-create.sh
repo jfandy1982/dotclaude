@@ -40,7 +40,7 @@ cmd_list_open_prs() {
   [[ -n $branch ]] || die "preflight.json" "$dir/preflight.json names no remote branch. Run preflight.sh create-pr first."
   # shortcut: gh pr list --json isCrossRepository (as in gh pr view) is assumed, not run against a real gh; drop the filter if gh refuses the field
   run_gh "open PRs of branch $branch" pr list --repo "$REPO_URL" --head "$branch" --state open --json number,title,url,isCrossRepository
-  printf '%s' "$OUT" | jq -c '[.[] | select(.isCrossRepository | not) | {number, title, url}]' ||
+  printf '%s' "$OUT" | jq -c '[.[] | select(.isCrossRepository | not) | {number, title, url}]' 2> /dev/null ||
     die "open PRs of branch $branch" "Cannot read the PR list returned by gh."
   return 0
 }

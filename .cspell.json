@@ -34,6 +34,7 @@
     "pathspec",
     "rtrimstr",
     "sdlc",
+    "slurpfile",
     "startswith",
     "textconv",
     "tonumber",

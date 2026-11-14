@@ -467,6 +467,12 @@ expect_error "usage/alert number is not a number" 2 usage false
 run_data "$stub" alert 3
 expect_error "usage/alert without a folder" 2 usage false
 
+# an issue answer that is not an issue object: one error line, no file
+stub=$(new_stub)
+printf '%s\n' '[]' > "$stub/issue-view.out"
+run_data "$stub" issue 12 PR_DIR
+expect_error_empty "issue/an answer that is not an issue object" 1 other false "$PR_DIR"
+
 # ci works offline on the pr.json that pr wrote
 count=$(jq length "$fixtures/gh/ci-cases.json")
 i=0
@@ -481,6 +487,14 @@ while [[ $i -lt $count ]]; do
   i=$((i + 1))
 done
 
+# a statusCheckRollup of the wrong shape: jq's own message must not reach stderr, the contract line stays the only one
+stub=$(new_stub)
+printf '%s\n' '{"statusCheckRollup":{"a":1}}' > "$tmp/ci-bad.json"
+SEED_PR_JSON="$tmp/ci-bad.json"
+run_data "$stub" ci PR_DIR
+SEED_PR_JSON=""
+expect_error "ci/a status of the wrong shape gives one error line" 1 other false
+
 stub=$(new_stub)
 cp "$fixtures/gh/feedback-inline-pages.txt" "$stub/api-comments.out"
 SEED_PR_JSON="$fixtures/gh/feedback-view.json"
@@ -493,6 +507,14 @@ if grep -q -- '--paginate' "$stub/calls.log"; then
 else
   report "feedback/asks gh for all pages" fail "$(cat "$stub/calls.log")"
 fi
+
+# 400 inline comments of 1 KB each (400 KB): too large for one jq argument
+stub=$(new_stub)
+jq -nc '[range(400) | {user: {login: "a"}, path: "f", line: 1, body: ("x" * 1000)}]' > "$stub/api-comments.out"
+SEED_PR_JSON="$fixtures/gh/feedback-view.json"
+run_data "$stub" feedback 7 PR_DIR
+SEED_PR_JSON=""
+expect_text "feedback/400 large inline comments" "$tmp/data.out" "1 comments, 1 reviews, 400 inline comments"
 
 stub=$(new_stub)
 printf '%s\n' '[]' > "$stub/api-comments.out"
@@ -571,6 +593,13 @@ fail_stub "$stub" api-pulls 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"
 run_data "$stub" pr 7 PR_DIR
 expect_error_empty "pr/base commit call fails" 11 not_found false "$PR_DIR"
 
+# the base commit answer has no sha: the string "null" must not be stored as baseRefOid
+stub=$(new_stub)
+cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
+printf '%s\n' '{"base":{}}' > "$stub/api-pulls.out"
+run_data "$stub" pr 7 PR_DIR
+expect_error_empty "pr/an answer without a base commit" 1 other false "$PR_DIR"
+
 stub=$(new_stub)
 fail_stub "$stub" api-pulls 1 "error connecting to github.example.local"
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
@@ -641,6 +670,8 @@ EOF
 
 run_plain "$host_script" --url "https:///x"
 expect_error "remote-host/no host in the URL" 1 other false
+run_plain "$host_script" --url "../other.git"
+expect_error "remote-host/a relative path is no host" 1 other false
 run_plain "$host_script"
 expect_error "remote-host/no arguments" 2 usage false
 
@@ -1078,6 +1109,8 @@ run_plain "$diff_script" files origin main
 expect_error "branch-diff/usage: files with too few arguments" 2 usage false
 run_plain "$diff_script" file origin main
 expect_error "branch-diff/usage: file with too few arguments" 2 usage false
+run_plain "$diff_script" file origin main ""
+expect_error "branch-diff/usage: file with an empty path" 2 usage false
 
 # ---- pr-body-check.sh ----
 # The body of create-pr must name every changed file: as its path, below a directory entry, or in a brace pattern.
@@ -1191,6 +1224,17 @@ run_plain "$bc_script" "$bc_dir"
 expect_error_text "pr-body-check/file-table.json is not JSON" 1 other false "Cannot read the file table"
 run_plain "$bc_script"
 expect_error "pr-body-check/usage: no arguments" 2 usage false
+
+# a table of about 150 KB (1500 changed files): one jq argument is limited to 128 KB on Linux, so it must be read from a file
+bc_big=$(jq -nc '[range(1500) | {path: ("dir/" + ("x" * 100) + @text)}]')
+bc_run "$bc_big" << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `a.ts` — changed
+EOF
+expect_jq "pr-body-check/a large file table (1500 files) is read" '.uncovered | length == 1500'
 
 # ---- pr-checklist-parse.jq ----
 
@@ -1479,6 +1523,11 @@ bs_commit "$bs_root/work" x
 git -C "$bs_root/work" push -q -u origin fix-x:fix/x-new
 PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
 expect_jq "branch-state/different local and remote branch names" '. == {branch: "fix-x", remote: "origin", remoteBranch: "fix/x-new"}'
+# ahead with different names: plain "git push" would be refused, so the hint names the target
+bs_commit "$bs_root/work" y
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_error_text "branch-state/ahead with different names names the push target" 1 other false "git push origin HEAD:fix/x-new"
+git -C "$bs_root/work" reset -q --hard origin/fix/x-new
 git -C "$bs_root/work" checkout -q feat
 
 # a branch name with a dot and a slash, and a remote name with a slash
@@ -1550,6 +1599,7 @@ git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
 # pf_branch_repo <branch> [no-upstream]: a repository for create-pr on that branch; the upstream is origin/<branch>, already fetched
 pf_branch_repo() {
   local branch=$1 upstream=${2:-} dir
+  # a second argument is "no-upstream" or the name of the upstream branch on origin (default: the same as the local name)
   dir=$(mktemp -d "$tmp/pf-repo-XXXXXX")
   git -C "$dir" init -q
   git -C "$dir" symbolic-ref HEAD "refs/heads/$branch"
@@ -1561,8 +1611,8 @@ pf_branch_repo() {
   git -C "$dir" commit -q -m A
   if [[ $upstream != no-upstream ]]; then
     git -C "$dir" config "branch.$branch.remote" origin
-    git -C "$dir" config "branch.$branch.merge" "refs/heads/$branch"
-    git -C "$dir" update-ref "refs/remotes/origin/$branch" HEAD
+    git -C "$dir" config "branch.$branch.merge" "refs/heads/${upstream:-$branch}"
+    git -C "$dir" update-ref "refs/remotes/origin/${upstream:-$branch}" HEAD
   fi
   printf '%s\n' "$dir"
   return 0
@@ -1684,6 +1734,13 @@ PF_REPO=$(pf_branch_repo main) pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error_text "preflight/create-pr: on the default branch" 1 other false "Branch main is the default branch"
 expect_error_message "preflight/create-pr: on the default branch, hint names the skill" '`/create-pr`'
 expect_no_pr_folder "preflight/create-pr: on the default branch makes no folder" "$pf_case_tmp"
+
+# a feature branch whose upstream is the default branch (git switch -c feat origin/main): a PR would have head = base
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo feat main) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error_text "preflight/create-pr: the upstream is the default branch" 1 other false "tracks the default branch main"
+expect_error_text "preflight/create-pr: the upstream is the default branch, hint pushes the branch" 1 other false "git push -u origin feat"
+expect_no_pr_folder "preflight/create-pr: the upstream is the default branch makes no folder" "$pf_case_tmp"
 
 # a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
 pf_cred_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
@@ -1827,7 +1884,7 @@ EOT
 
 refs_script="$root/plugins/dotclaude-dev/scripts/pr-refs.sh"
 
-# make_refs_repos <dir>: builds <dir>/origin.git, <dir>/work and <dir>/user; sets REFS_A (the commit the PR was cut from) and REFS_F (the PR head)
+# make_refs_repos <dir>: builds <dir>/origin.git, <dir>/work and <dir>/user; sets REFS_A (the commit the PR was cut from), REFS_B (main's tip) and REFS_F (the PR head)
 make_refs_repos() {
   local dir=$1
   git init -q --bare "$dir/origin.git"
@@ -1851,6 +1908,7 @@ make_refs_repos() {
   echo b > "$dir/work/b.txt"
   git -C "$dir/work" add -A
   git -C "$dir/work" commit -q -m B
+  REFS_B=$(git -C "$dir/work" rev-parse HEAD)
   git -C "$dir/work" push -q origin main
   git clone -q "$dir/origin.git" "$dir/user"
   return 0
@@ -1896,6 +1954,11 @@ dir=$(refs_folder 7 "$REFS_A" main)
 jq '.headRefOid = "0123456789012345678901234567890123456789"' "$dir/pr.json" > "$dir/pr.new" && mv "$dir/pr.new" "$dir/pr.json"
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
 expect_error_text "pr-refs/the commit of pr.json is gone after a force-push" 1 other false "force-pushed"
+
+# a commit the clone has (main's tip) but that is not part of the PR head: an old head after a force-push looks the same
+dir=$(refs_folder 7 "$REFS_B" main)
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error_text "pr-refs/a commit that exists locally but is not part of the PR head" 1 other false "force-pushed"
 
 dir=$(refs_folder 7 "$REFS_F" no-such-base)
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
