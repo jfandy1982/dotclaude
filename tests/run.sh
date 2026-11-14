@@ -2091,6 +2091,15 @@ else
   report "plugin README: sections for skills, running, temp files, prerequisites, versions, limitations" fail "missing: ${readme_missing:-the file}"
 fi
 
+# the root README points to the plugin README and its plugin heading is the marketplace description
+marketplace_description=$(jq -r '.plugins[] | select(.name == "dotclaude-dev") | .description' "$root/.claude-plugin/marketplace.json")
+if grep -qF '](plugins/dotclaude-dev/README.md)' "$root/README.md" && grep -qxF "### dotclaude-dev — $marketplace_description" "$root/README.md" &&
+  [[ $(wc -w < "$root/README.md") -ge 40 ]]; then
+  report "root README: points to the plugin README, heading matches the marketplace, at least 40 words" ok
+else
+  report "root README: points to the plugin README, heading matches the marketplace, at least 40 words" fail "link, heading or word count is wrong"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do

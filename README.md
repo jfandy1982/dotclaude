@@ -1,6 +1,6 @@
 # dotclaude
 
-Skills and Agents and Hooks and ... reusable for Claude Code, packaged as plugins.
+Skills and Agents and Hooks and ... reusable for Claude Code, packaged as plugins. Each plugin lives in its own folder below `plugins/` and is listed in the marketplace of this repository.
 
 ## Installation
 
@@ -14,4 +14,6 @@ Skills and Agents and Hooks and ... reusable for Claude Code, packaged as plugin
 /plugin install dotclaude-dev@jfandy1982-dotclaude
 ```
 
-- `plugins/dotclaude-dev/skills/` — see its [README](plugins/dotclaude-dev/skills/README.md) for per-skill status (in-progress/stable/deprecated)
+Skills for pull requests (`create-pr`, `review-pr`) and an environment check (`doctor`). All of them start only when you run them. Run `/dotclaude-dev:doctor` after installing: it checks the prerequisites (a few plugins, `git`, `gh`, `jq` and a GitHub login).
+
+- [`plugins/dotclaude-dev/README.md`](plugins/dotclaude-dev/README.md) — the skills with status and arguments, how they run, prerequisites, known limitations
