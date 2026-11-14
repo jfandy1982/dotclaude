@@ -1,4 +1,4 @@
-# Error contract of the scripts that call gh or git (preflight.sh, pr-data.sh, pr-create.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
+# Error contract of the scripts that call gh or git (preflight.sh, pr-data.sh, pr-create.sh, pr-refs.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
 # The sourcing script sets SCRIPT and SUBCOMMANDS (for the usage message) and may set VERB (default "read", "create" for writes).
 # On failure: nothing on stdout, one JSON line on stderr {error, exit, retryable, what, message}
 # and a fixed exit code: 10 auth, 11 not_found, 12 rate_limited, 13 network, 1 other, 2 usage.

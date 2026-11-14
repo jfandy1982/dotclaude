@@ -1448,6 +1448,124 @@ not found|1|gh: Not Found (HTTP 404)
 network|1|error connecting to github.example.local
 EOT
 
+# ---- pr-refs.sh ----
+# A bare "origin" holds main (commits A, then B) and refs/pull/7/head (commit F, cut from A); "user" is a clone that does not have F yet.
+
+refs_script="$root/plugins/dotclaude-dev/scripts/pr-refs.sh"
+
+# make_refs_repos <dir>: builds <dir>/origin.git, <dir>/work and <dir>/user; sets REFS_A (the commit the PR was cut from) and REFS_F (the PR head)
+make_refs_repos() {
+  local dir=$1
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/origin.git" symbolic-ref HEAD refs/heads/main
+  git init -q "$dir/work"
+  git -C "$dir/work" symbolic-ref HEAD refs/heads/main
+  git -C "$dir/work" config user.name tester
+  git -C "$dir/work" config user.email tester@example.com
+  git -C "$dir/work" remote add origin "$dir/origin.git"
+  echo a > "$dir/work/a.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m A
+  REFS_A=$(git -C "$dir/work" rev-parse HEAD)
+  git -C "$dir/work" checkout -q -b feat
+  echo f > "$dir/work/f.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m F
+  REFS_F=$(git -C "$dir/work" rev-parse HEAD)
+  git -C "$dir/work" push -q origin "$REFS_F:refs/pull/7/head"
+  git -C "$dir/work" checkout -q main
+  echo b > "$dir/work/b.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m B
+  git -C "$dir/work" push -q origin main
+  git clone -q "$dir/origin.git" "$dir/user"
+  return 0
+}
+
+# refs_folder <number> <head> <base>: a work folder whose preflight.json names the remote origin and whose pr.json holds the three fields
+refs_folder() {
+  local number=$1 head=$2 base=$3 dir
+  dir=$(new_work)
+  printf '%s\n' '{"host":"github.example.local","repoUrl":"https://github.example.local/o/r","repoPath":"o/r","remote":"origin","skill":"review-pr"}' > "$dir/preflight.json"
+  jq -n --argjson number "$number" --arg head "$head" --arg base "$base" '{number: $number, headRefOid: $head, baseRefName: $base}' > "$dir/pr.json"
+  printf '%s\n' "$dir"
+  return 0
+}
+
+refs_root=$(mktemp -d "$tmp/refs-XXXXXX")
+make_refs_repos "$refs_root"
+refs_user="$refs_root/user"
+
+dir=$(refs_folder 7 "$REFS_F" main)
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_jq "pr-refs/the merge base is the commit the PR was cut from, although main moved on" '. == {mergeBase: $a}' --arg a "$REFS_A"
+git -C "$refs_user" cat-file -e "$REFS_F^{commit}" 2> /dev/null &&
+  report "pr-refs/the PR head is fetched" ok || report "pr-refs/the PR head is fetched" fail "commit $REFS_F missing in the clone"
+[[ $(git -C "$refs_user" branch --show-current) == main ]] &&
+  report "pr-refs/the checked-out branch of the clone stays as it was" ok ||
+  report "pr-refs/the checked-out branch of the clone stays as it was" fail "$(git -C "$refs_user" branch --show-current)"
+
+# a base branch name is data: shell characters in it reach git as one argument and run nothing
+for odd_base in 'x;touch-pwned' 'x$(id)' "x'quote"; do
+  git -C "$refs_root/work" push -q origin "main:refs/heads/$odd_base"
+  dir=$(refs_folder 7 "$REFS_F" "$odd_base")
+  PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+  expect_jq "pr-refs/base branch name $odd_base" '. == {mergeBase: $a}' --arg a "$REFS_A"
+done
+
+dir=$(refs_folder 9 "$REFS_F" main)
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/the PR head cannot be fetched" 1 other false
+expect_error_message "pr-refs/the PR head cannot be fetched, message" "Could not fetch the head of PR 9"
+
+# the PR was force-pushed after pr.json was written: the commit pr.json names is not part of the fetched head
+dir=$(refs_folder 7 "$REFS_A" main)
+jq '.headRefOid = "0123456789012345678901234567890123456789"' "$dir/pr.json" > "$dir/pr.new" && mv "$dir/pr.new" "$dir/pr.json"
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/the commit of pr.json is gone after a force-push" 1 other false
+expect_error_message "pr-refs/the commit of pr.json is gone, message says force-pushed" "force-pushed"
+
+dir=$(refs_folder 7 "$REFS_F" no-such-base)
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/the base branch does not exist" 1 other false
+expect_error_message "pr-refs/the base branch does not exist, message" "Could not fetch base branch no-such-base"
+
+# a base branch without any common commit with the PR head
+git -C "$refs_root/work" checkout -q --orphan unrelated
+git -C "$refs_root/work" rm -rfq .
+echo u > "$refs_root/work/u.txt"
+git -C "$refs_root/work" add -A
+git -C "$refs_root/work" commit -q -m unrelated
+git -C "$refs_root/work" push -q origin unrelated
+dir=$(refs_folder 7 "$REFS_F" unrelated)
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/no common commit" 1 other false
+expect_error_message "pr-refs/no common commit, message" "merge base"
+
+# pr.json is read as data: what is not a number or a commit id is refused before git runs
+for bad in '{"number":"7;x","headRefOid":"'"$REFS_F"'","baseRefName":"main"}' '{"number":7,"headRefOid":"not-a-commit","baseRefName":"main"}' '{"number":7,"headRefOid":"'"$REFS_F"'","baseRefName":""}' '{"number":7,"headRefOid":"'"$REFS_F"'"}'; do
+  dir=$(refs_folder 7 "$REFS_F" main)
+  printf '%s\n' "$bad" > "$dir/pr.json"
+  PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+  expect_error "pr-refs/unusable pr.json: $bad" 1 other false
+done
+
+dir=$(refs_folder 7 "$REFS_F" main)
+rm -f "$dir/pr.json"
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/no pr.json" 1 other false
+dir=$(refs_folder 7 "$REFS_F" main)
+printf '%s\n' '{"host":"github.example.local","repoUrl":"https://github.example.local/o/r","repoPath":"o/r"}' > "$dir/preflight.json"
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/preflight.json without a remote" 1 other false
+PLAIN_DIR="$rg_bare" run_plain "$refs_script" "$dir"
+expect_error "pr-refs/outside a repository" 1 other false
+expect_error_message "pr-refs/outside a repository, the contract wording" "Not inside a git repository"
+run_plain "$refs_script"
+expect_error "pr-refs/usage: no arguments" 2 usage false
+run_plain "$refs_script" a b
+expect_error "pr-refs/usage: two arguments" 2 usage false
+
 # ---- skills: the failure rule for script calls is worded the same ----
 
 rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.'
@@ -1511,6 +1629,13 @@ if grep -qF 'scripts/pr-data.sh" pr <pr-arg> <pr-dir>' "$review_skill" &&
   report "skills/review-pr script calls use the short signatures" ok
 else
   report "skills/review-pr script calls use the short signatures" fail "a pr-data.sh call does not match the short signature"
+fi
+
+# the base branch name comes from the PR: the skill never puts it into a command, pr-refs.sh reads it from pr.json
+if grep -qF 'scripts/pr-refs.sh" <pr-dir>' "$review_skill" && ! grep -qE '^git (fetch origin|merge-base <pr\.headRefOid>)|^git .*<pr\.baseRefName>' "$review_skill"; then
+  report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" ok
+else
+  report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" fail "script call missing or a raw git fetch/merge-base or the base branch placeholder is left"
 fi
 
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
