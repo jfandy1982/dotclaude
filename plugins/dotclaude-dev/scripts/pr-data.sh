@@ -53,18 +53,21 @@ cmd_pr() {
   body=$(printf '%s' "$json" | jq -r '.body // ""' 2> /dev/null) || die "PR $pr_arg" "Cannot read the PR body returned by gh."
   write_file "$dir" pr.json "$json"
   write_file "$dir" body.txt "$body"
-  printf '%s' "$json" | jq 'del(.body, .files, .comments, .reviews, .statusCheckRollup)'
-  return $?
+  printf '%s' "$json" | jq 'del(.body, .files, .comments, .reviews, .statusCheckRollup)' 2> /dev/null ||
+    die "PR $pr_arg" "Cannot read the PR data returned by gh."
+  return 0
 }
 
 cmd_issue() {
-  local number=$1 dir=$2
+  local number=$1 dir=$2 line
   [[ $number =~ ^[0-9]+$ ]] || usage
   load_preflight "$dir"
   run_gh "issue #$number" issue view "$number" --repo "$REPO_URL" --json number,title,state,body,labels
+  line=$(printf '%s' "$OUT" | jq -r '"#\(.number) \(.title) (\(.state))"' 2> /dev/null) ||
+    die "issue #$number" "Cannot read the issue returned by gh."
   write_file "$dir" "issue-$number.json" "$OUT"
-  printf '%s' "$OUT" | jq -r '"#\(.number) \(.title) (\(.state))"'
-  return $?
+  printf '%s\n' "$line"
+  return 0
 }
 
 cmd_alert() {
@@ -79,8 +82,9 @@ cmd_alert() {
     message: .most_recent_instance.message.text, path: .most_recent_instance.location.path}' 2> /dev/null) ||
     die "alert #$number" "Cannot read the alert returned by gh."
   write_file "$dir" "alert-$number.json" "$result"
-  printf '%s' "$result" | jq -r '"#\(.number) \(.ruleId) (\(.state))"'
-  return $?
+  printf '%s' "$result" | jq -r '"#\(.number) \(.ruleId) (\(.state))"' 2> /dev/null ||
+    die "alert #$number" "Cannot read the alert returned by gh."
+  return 0
 }
 
 cmd_ci() {
@@ -93,7 +97,7 @@ cmd_ci() {
                else "failed" end)}]
     | {passed: (map(select(.state == "passed")) | length),
        failed: [.[] | select(.state == "failed") | .name],
-       pending: [.[] | select(.state == "pending") | .name]}' "$dir/pr.json" ||
+       pending: [.[] | select(.state == "pending") | .name]}' "$dir/pr.json" 2> /dev/null ||
     die "CI status" "Cannot read the CI status in $dir/pr.json."
   return 0
 }
@@ -113,8 +117,9 @@ cmd_feedback() {
     inline: [$inline[] | {author: .user.login, path, line, body}]}' "$dir/pr.json" 2> /dev/null) ||
     die "prior feedback" "Cannot read the comments in $dir/pr.json."
   write_file "$dir" feedback.json "$result"
-  printf '%s' "$result" | jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"'
-  return $?
+  printf '%s' "$result" | jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"' 2> /dev/null ||
+    die "prior feedback" "Cannot read the comments in $dir/pr.json."
+  return 0
 }
 
 main() {

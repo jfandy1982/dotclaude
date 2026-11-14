@@ -467,6 +467,12 @@ expect_error "usage/alert number is not a number" 2 usage false
 run_data "$stub" alert 3
 expect_error "usage/alert without a folder" 2 usage false
 
+# an issue answer that is not an issue object: one error line, no file
+stub=$(new_stub)
+printf '%s\n' '[]' > "$stub/issue-view.out"
+run_data "$stub" issue 12 PR_DIR
+expect_error_empty "issue/an answer that is not an issue object" 1 other false "$PR_DIR"
+
 # ci works offline on the pr.json that pr wrote
 count=$(jq length "$fixtures/gh/ci-cases.json")
 i=0
@@ -480,6 +486,14 @@ while [[ $i -lt $count ]]; do
   check "ci/$(jq -r ".[$i].name" "$fixtures/gh/ci-cases.json")" "$tmp/data.out" "$tmp/ci-expected.json"
   i=$((i + 1))
 done
+
+# a statusCheckRollup of the wrong shape: jq's own message must not reach stderr, the contract line stays the only one
+stub=$(new_stub)
+printf '%s\n' '{"statusCheckRollup":{"a":1}}' > "$tmp/ci-bad.json"
+SEED_PR_JSON="$tmp/ci-bad.json"
+run_data "$stub" ci PR_DIR
+SEED_PR_JSON=""
+expect_error "ci/a status of the wrong shape gives one error line" 1 other false
 
 stub=$(new_stub)
 cp "$fixtures/gh/feedback-inline-pages.txt" "$stub/api-comments.out"
