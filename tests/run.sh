@@ -2149,7 +2149,7 @@ done
 # each skill calls its scripts
 expect_calls "skills/create-pr calls its scripts" "$create_skill" \
   'scripts/preflight.sh" create-pr' 'scripts/pr-create.sh" list-open-prs' 'scripts/branch-diff.sh" files' 'scripts/pr-checklist.sh" ' \
-  'scripts/pr-data.sh" issue' 'scripts/pr-data.sh" alert' 'scripts/pr-create.sh" labels' 'scripts/pr-body-check.sh"' 'scripts/pr-create.sh" create' \
+  'scripts/pr-data.sh" issue' 'scripts/pr-data.sh" alert' 'scripts/pr-create.sh" labels' 'scripts/pr-create.sh" check-labels' 'scripts/pr-body-check.sh"' 'scripts/pr-create.sh" create' \
   'references/pr-body.md'
 expect_calls "skills/review-pr calls its scripts" "$review_skill" \
   'scripts/preflight.sh" review-pr origin' 'scripts/pr-data.sh" pr' 'scripts/pr-data.sh" issue' 'scripts/pr-data.sh" ci' 'scripts/pr-data.sh" feedback' \
@@ -2159,7 +2159,7 @@ expect_calls "skills/review-pr calls its scripts" "$review_skill" \
 expect_none "skills/create-pr keeps the replaced commands and the old dialogs out" "$create_skill" \
   '@\{u\}' 'git fetch <remote>' 'git rev-list' 'git branch --show-current' 'gh repo view' 'gh api user' 'remote-host\.sh' 'pr-create\.sh" repo' \
   '^git diff <remote>/<default-branch>' ':\(glob\)' 'repos/\{owner\}/\{repo\}' '<host>|<repo-url>|<repo-path>|<remote-url>' 'pr-body-parse\.jq' \
-  'multiSelect' 'multi-select' 'Change something else' '--limit 50' '### 🔴|### 🟡|### 🟢|- \[ \]'
+  'multiSelect' 'multi-select' 'Change something else' '--limit 50' 'jq --arg name' '<yes\|no> \["<label>"' '### 🔴|### 🟡|### 🟢|- \[ \]'
 expect_none "skills/review-pr keeps the replaced commands out" "$review_skill" \
   '^git (fetch origin|merge-base "?<pr\.headRefOid>)' '^git .*<pr\.baseRefName>' 'remote-host\.sh' 'gh api user' 'gh repo view' '<host>|<repo-path>|<origin-url>'
 expect_none "references/pr-body.md has no deployment section (review-pr Gate 2 is its home)" "$pr_body_md" 'Deployment PRs'
