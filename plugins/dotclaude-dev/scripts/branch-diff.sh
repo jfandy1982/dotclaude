@@ -6,6 +6,7 @@
 #       a one-line JSON array [{path, renamedFrom, added, removed, generated, diff}]:
 #       added/removed are null for binary files, diff is the path of the diff file or null;
 #       also leaves <pr-dir>/changed-files.list (git's NUL-separated numstat, read back by the script itself)
+#       and <pr-dir>/file-table.json (the printed array, read by pr-body-check.sh)
 #   branch-diff.sh file <remote> <default-branch> <path> [<old-path>]
 #       prints the diff of one path (nothing when the path did not change); pass renamedFrom as <old-path> for a renamed file
 # Errors follow the contract in contract.sh (no gh call is made here).
@@ -51,7 +52,7 @@ is_generated() {
 
 # shortcut: several processes per file (about 15 ms, 1000 files took about 15 s), fine up to a few hundred; batch check-attr and jq beyond that
 cmd_files() {
-  local remote=$1 base=$2 dir=$3 tok rest added removed path old number=0 name content entries="" top generated diff_path entry listing
+  local remote=$1 base=$2 dir=$3 tok rest added removed path old number=0 name content entries="" top generated diff_path entry listing table
   require_repo
   [[ -d $dir ]] || die "diff folder" "Folder $dir does not exist."
   # one call per folder: the script never deletes, so a second call would mix its files with the first run's
@@ -90,7 +91,9 @@ cmd_files() {
        generated: ($generated == "yes"), diff: (if $diff == "" then null else $diff end)}') || die "table entry of $path" "Cannot build the table entry."
     entries+=$entry$'\n'
   done < "$listing"
-  printf '%s' "$entries" | jq -sc '.'
+  table=$(printf '%s' "$entries" | jq -sc '.') || die "file table" "Cannot build the file table."
+  write_file "$dir" file-table.json "$table"
+  printf '%s\n' "$table"
   return 0
 }
 

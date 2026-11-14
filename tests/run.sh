@@ -14,10 +14,14 @@ export TMPDIR="$tmp"
 passed=0
 failed=0
 SEED_PR_JSON=""
+# the contract wording of require_repo, checked in several sections
+not_in_repo="Not inside a git repository"
 
 # The fake gh replaces the real one in every bash process started below
 source "$root/tests/stub/gh.sh"
 export -f gh
+source "$root/tests/stub/git.sh"
+export -f git
 
 # report <name> <ok|fail> [detail]
 report() {
@@ -607,7 +611,8 @@ work=$(new_work)
 run_stub "$stub" "$create_script" labels "$work"
 printf '%s\n' '{"mode":"taxonomy","labels":[{"name":"type: bug","description":"Bug"},{"name":"aspect: ui","description":"UI"}]}' > "$tmp/create-expected.json"
 check "labels/taxonomy mode keeps type: and aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
-check "labels/labels.json holds all labels" "$work/labels.json" "$stub/label-list.out"
+jq '.labels' "$tmp/data.out" > "$tmp/create-expected.json"
+check "labels/labels.json holds only the labels that may be chosen (type: and aspect:), not priority:" "$work/labels.json" "$tmp/create-expected.json"
 expect_call "labels/limit and repository are passed" "$stub" "label list --repo $repo_url --json name,description --limit 50"
 
 stub=$(new_stub)
@@ -616,13 +621,26 @@ work=$(new_work)
 run_stub "$stub" "$create_script" labels "$work"
 jq -c '{mode: "fallback", labels: .}' "$stub/label-list.out" > "$tmp/create-expected.json"
 check "labels/fallback mode without type: or aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
+check "labels/fallback mode: labels.json holds all labels" "$work/labels.json" "$stub/label-list.out"
 
+# list-open-prs: the head is the branch name on the remote (preflight.json), PRs from forks with the same head name do not count
 stub=$(new_stub)
 printf '%s\n' '[]' > "$stub/pr-list.out"
 work=$(new_work)
-run_stub "$stub" "$create_script" list-open-prs "$work" feat/x
+jq '. + {remoteBranch: "fix/x-new"}' "$work/preflight.json" > "$work/preflight.new" && mv "$work/preflight.new" "$work/preflight.json"
+run_stub "$stub" "$create_script" list-open-prs "$work"
 expect_text "list-open-prs/none" "$tmp/data.out" "[]"
-expect_call "list-open-prs/asks for the branch and open PRs" "$stub" "pr list --repo $repo_url --head feat/x --state open"
+expect_call "list-open-prs/asks for the remote branch and open PRs" "$stub" "pr list --repo $repo_url --head fix/x-new --state open"
+
+stub=$(new_stub)
+printf '%s\n' '[{"number":5,"title":"mine","url":"https://github.example.local/o/r/pull/5","isCrossRepository":false},{"number":6,"title":"from a fork","url":"https://github.example.local/o/r/pull/6","isCrossRepository":true}]' > "$stub/pr-list.out"
+run_stub "$stub" "$create_script" list-open-prs "$work"
+expect_text "list-open-prs/a PR from a fork with the same head name is ignored, url is kept" "$tmp/data.out" '[{"number":5,"title":"mine","url":"https://github.example.local/o/r/pull/5"}]'
+
+work=$(new_work)
+run_stub "$stub" "$create_script" list-open-prs "$work"
+expect_error "list-open-prs/preflight.json without remoteBranch" 1 other false
+expect_error_message "list-open-prs/preflight.json without remoteBranch, message" "preflight.sh create-pr"
 
 # create: title and body come from files and reach gh unchanged
 title='fix: quote `$TMPDIR` in "paths" $(echo x)'
@@ -703,7 +721,7 @@ EOT
 work=$(mktemp -d "$tmp/work-XXXXXX")
 printf '%s\n' 'a title' > "$work/title.txt"
 printf '%s\n' 'body text' > "$work/body.txt"
-for sub in "labels $work" "list-open-prs $work feat/x" "create $work no"; do
+for sub in "labels $work" "list-open-prs $work" "create $work no"; do
   run_stub "$stub" "$create_script" $sub
   expect_error "preflight.json/pr-create ${sub%% *} needs the file" 1 other false
   expect_error_message "preflight.json/pr-create ${sub%% *} says what to do" "Run preflight first"
@@ -788,6 +806,7 @@ expect_jq "branch-diff/files: hand-written files, numbers and diff files" \
   '. == [{path: "base.txt", renamedFrom: null, added: 1, removed: 0, generated: false, diff: ($d + "/diff/001.diff")},
          {path: "src/a.txt", renamedFrom: null, added: 2, removed: 0, generated: false, diff: ($d + "/diff/002.diff")}]' --arg d "$bd_dir"
 expect_in_file "branch-diff/files: diff file holds the change" "$bd_dir/diff/001.diff" "+two"
+check "branch-diff/files: file-table.json holds the printed table" "$bd_dir/file-table.json" "$tmp/data.out"
 
 # one call per folder: a second call must not mix its files with the first run's
 PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$bd_dir"
@@ -990,6 +1009,119 @@ expect_error "branch-diff/usage: files with too few arguments" 2 usage false
 run_plain "$diff_script" file origin main
 expect_error "branch-diff/usage: file with too few arguments" 2 usage false
 
+# ---- pr-body-check.sh ----
+# The body of create-pr must name every changed file: as its path, below a directory entry, or in a brace pattern.
+
+bc_script="$root/plugins/dotclaude-dev/scripts/pr-body-check.sh"
+
+# bc_run <file-table-json>: the body comes from stdin; runs the check in a fresh folder
+bc_run() {
+  local table=$1 dir
+  dir=$(mktemp -d "$tmp/bc-XXXXXX")
+  cat > "$dir/body.txt"
+  printf '%s\n' "$table" > "$dir/file-table.json"
+  run_plain "$bc_script" "$dir"
+  return 0
+}
+
+bc_run '[{"path":"a.ts"},{"path":"b.ts"},{"path":"my file.txt"}]' << 'EOF'
+## What
+
+x
+
+## Why
+
+y
+
+## File risk
+
+### 🔴 Critical
+
+- `a.ts` — changed
+
+### 🟡 Medium
+
+- `my file.txt` — changed
+
+### 🟢 Low
+
+- `b.ts` — changed
+EOF
+expect_jq "pr-body-check/every file has its own entry" '.uncovered == [] and .fileRisk.state == "ok"'
+
+bc_run '[{"path":"src/dir/x.ts"},{"path":"src/dir/sub/y.ts"},{"path":"src/dir2/z.ts"}]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `src/dir/` — the folder (2 files)
+EOF
+expect_jq "pr-body-check/a directory entry covers what is below it and not a sibling directory with the same start" '.uncovered == ["src/dir2/z.ts"]'
+
+bc_run '[{"path":"src/app/foo/foo.component.ts"},{"path":"src/app/foo/foo.component.spec.ts"},{"path":"src/app/foo/foo.component.html"},{"path":"src/app/foo/bar.component.ts"}]' << 'EOF'
+## File risk
+
+### 🟡 Medium
+
+- `src/app/foo/foo.component.{ts,spec.ts}` — the component (2 files)
+EOF
+expect_jq "pr-body-check/a brace pattern covers exactly its expansions" '.uncovered == ["src/app/foo/foo.component.html", "src/app/foo/bar.component.ts"]'
+
+bc_run '[{"path":"a.ts"},{"path":"yarn.lock"},{"path":"new/name.ts","renamedFrom":"old/name.ts"}]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `a.ts` — changed
+- `old/name.ts` — renamed
+EOF
+expect_jq "pr-body-check/a generated file and a rename need an entry, the old path does not count" '.uncovered == ["yarn.lock", "new/name.ts"]'
+
+bc_run '[{"path":"a.ts"}]' << 'EOF'
+## What
+
+no file risk section at all
+EOF
+expect_jq "pr-body-check/without a File risk section nothing is covered" '.uncovered == ["a.ts"] and .fileRisk.state == "missing"'
+
+bc_run '[]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `extra.ts` — not part of the table
+EOF
+expect_jq "pr-body-check/an entry for an unchanged file is not an error" '.uncovered == []'
+
+bc_run '[{"path":"a.ts"}]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `a.ts` — changed
+
+## Merge danger
+
+Drops the column.
+
+## Closes
+
+Closes #4
+EOF
+expect_jq "pr-body-check/the parser result is part of the output" '.mergeDanger == "Drops the column." and .closes.numbers == [4]'
+
+bc_dir=$(mktemp -d "$tmp/bc-XXXXXX")
+run_plain "$bc_script" "$bc_dir"
+expect_error "pr-body-check/no body.txt" 1 other false
+printf '%s\n' '## File risk' > "$bc_dir/body.txt"
+run_plain "$bc_script" "$bc_dir"
+expect_error "pr-body-check/no file-table.json" 1 other false
+printf '%s\n' 'not json' > "$bc_dir/file-table.json"
+run_plain "$bc_script" "$bc_dir"
+expect_error "pr-body-check/file-table.json is not JSON" 1 other false
+run_plain "$bc_script"
+expect_error "pr-body-check/usage: no arguments" 2 usage false
+
 # ---- pr-checklist-parse.jq ----
 
 checklist_parser="$root/plugins/dotclaude-dev/scripts/pr-checklist-parse.jq"
@@ -1191,13 +1323,142 @@ expect_error_message "run_git/branch-diff files: the message carries git's reaso
 rg_bare=$(mktemp -d "$tmp/bare-XXXXXX")
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$checklist_script" origin main
 expect_error "run_git/pr-checklist: outside a repository" 1 other false
-expect_error_message "require_repo/pr-checklist: outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "require_repo/pr-checklist: outside a repository, the contract wording" "$not_in_repo"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$(mktemp -d "$tmp/folder-XXXXXX")"
 expect_error "run_git/branch-diff files: outside a repository" 1 other false
-expect_error_message "require_repo/branch-diff files: outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "require_repo/branch-diff files: outside a repository, the contract wording" "$not_in_repo"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" file origin main base.txt
 expect_error "require_repo/branch-diff file: outside a repository" 1 other false
-expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "$not_in_repo"
+
+# ---- branch-state.sh ----
+# The "remotes" are local bare repositories, so the script really fetches from them.
+
+bs_script="$root/plugins/dotclaude-dev/scripts/branch-state.sh"
+
+# make_bs_repo <dir>: <dir>/origin.git (bare) and <dir>/work, a clone on the branch feat that tracks origin/feat and is in sync
+make_bs_repo() {
+  local dir=$1
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/origin.git" symbolic-ref HEAD refs/heads/main
+  git init -q "$dir/work"
+  git -C "$dir/work" symbolic-ref HEAD refs/heads/main
+  git -C "$dir/work" config user.name tester
+  git -C "$dir/work" config user.email tester@example.com
+  git -C "$dir/work" remote add origin "$dir/origin.git"
+  echo a > "$dir/work/a.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m A
+  git -C "$dir/work" push -q origin main
+  git -C "$dir/work" checkout -q -b feat
+  echo f > "$dir/work/f.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m F
+  git -C "$dir/work" push -q -u origin feat
+  return 0
+}
+
+# bs_commit <repo> <file>: one more commit
+bs_commit() {
+  local repo=$1 file=$2
+  echo "$file" > "$repo/$file"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$file"
+  return 0
+}
+
+bs_root=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_root"
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_jq "branch-state/in sync: branch, remote and remote branch" '. == {branch: "feat", remote: "origin", remoteBranch: "feat"}'
+
+git -C "$bs_root/work" checkout -q --detach
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script" create-pr
+git -C "$bs_root/work" checkout -q feat
+expect_error "branch-state/detached HEAD" 1 other false
+expect_error_message "branch-state/detached HEAD, message" "Not on a branch"
+expect_error_message "branch-state/detached HEAD, the hint names the skill" '`/create-pr`'
+
+git -C "$bs_root/work" checkout -q -b loose
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_error "branch-state/no upstream" 1 other false
+expect_error_message "branch-state/no upstream, message" "has no remote tracking branch"
+expect_error_message "branch-state/no upstream, the push command names the branch" "git push -u origin loose"
+
+# the upstream is a local branch: the old text took its name for a remote and said "check your network"
+git -C "$bs_root/work" checkout -q -b follows-main --track main
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_error "branch-state/the upstream is a local branch" 1 other false
+expect_error_message "branch-state/the upstream is a local branch, message" "local branch"
+git -C "$bs_root/work" checkout -q feat
+
+# local and remote branch names differ
+git -C "$bs_root/work" checkout -q -b fix-x
+bs_commit "$bs_root/work" x
+git -C "$bs_root/work" push -q -u origin fix-x:fix/x-new
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_jq "branch-state/different local and remote branch names" '. == {branch: "fix-x", remote: "origin", remoteBranch: "fix/x-new"}'
+git -C "$bs_root/work" checkout -q feat
+
+# a branch name with a dot and a slash, and a remote name with a slash
+git -C "$bs_root/work" checkout -q -b topic/a.b
+bs_commit "$bs_root/work" ab
+git init -q --bare "$bs_root/fork.git"
+git -C "$bs_root/work" remote add my/fork "$bs_root/fork.git"
+git -C "$bs_root/work" push -q -u my/fork topic/a.b
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_jq "branch-state/a remote name with a slash and a branch name with a dot" '. == {branch: "topic/a.b", remote: "my/fork", remoteBranch: "topic/a.b"}'
+git -C "$bs_root/work" checkout -q feat
+
+# behind, ahead and both: the stop names the upstream and the hint the skill
+bs_behind=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_behind"
+git clone -q "$bs_behind/origin.git" "$bs_behind/other"
+git -C "$bs_behind/other" config user.name tester
+git -C "$bs_behind/other" config user.email tester@example.com
+git -C "$bs_behind/other" checkout -q feat
+bs_commit "$bs_behind/other" more
+git -C "$bs_behind/other" push -q origin feat
+PLAIN_DIR="$bs_behind/work" run_plain "$bs_script" create-pr
+expect_error "branch-state/behind the remote" 1 other false
+expect_error_message "branch-state/behind the remote, message" "behind origin/feat"
+expect_error_message "branch-state/behind the remote, hint" 'then re-run `/create-pr`.'
+
+bs_commit "$bs_behind/work" mine
+PLAIN_DIR="$bs_behind/work" run_plain "$bs_script"
+expect_error "branch-state/both behind and ahead" 1 other false
+expect_error_message "branch-state/both behind and ahead says behind first" "behind origin/feat"
+
+bs_ahead=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_ahead"
+bs_commit "$bs_ahead/work" mine
+PLAIN_DIR="$bs_ahead/work" run_plain "$bs_script"
+expect_error "branch-state/ahead of the remote" 1 other false
+expect_error_message "branch-state/ahead of the remote, message" "not on origin/feat yet"
+
+# the remote is configured but its repository cannot be fetched
+bs_broken=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_broken"
+git -C "$bs_broken/work" config remote.origin.url "$bs_broken/no-such-repo.git"
+PLAIN_DIR="$bs_broken/work" run_plain "$bs_script"
+expect_error "branch-state/the fetch fails" 1 other false
+expect_error_message "branch-state/the fetch fails, message" "Could not fetch origin"
+
+# the branch config names a remote that does not exist
+bs_gone=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_gone"
+git -C "$bs_gone/work" config branch.feat.remote gone
+PLAIN_DIR="$bs_gone/work" run_plain "$bs_script"
+expect_error "branch-state/the configured remote does not exist" 1 other false
+expect_error_message "branch-state/the configured remote does not exist, message" "No remote named gone"
+
+PLAIN_DIR="$rg_bare" run_plain "$bs_script"
+expect_error "branch-state/outside a repository" 1 other false
+expect_error_message "branch-state/outside a repository, the contract wording" "$not_in_repo"
+run_plain "$bs_script" a b
+expect_error "branch-state/usage: two arguments" 2 usage false
+run_plain "$bs_script" other-skill
+expect_error "branch-state/usage: an unknown skill" 2 usage false
 
 # ---- preflight.sh ----
 
@@ -1205,6 +1466,28 @@ preflight_script="$root/plugins/dotclaude-dev/scripts/preflight.sh"
 pf_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
 git -C "$pf_repo" init -q
 git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
+
+# pf_branch_repo <branch> [no-upstream]: a repository for create-pr on that branch; the upstream is origin/<branch>, already fetched
+pf_branch_repo() {
+  local branch=$1 upstream=${2:-} dir
+  dir=$(mktemp -d "$tmp/pf-repo-XXXXXX")
+  git -C "$dir" init -q
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$branch"
+  git -C "$dir" config user.name tester
+  git -C "$dir" config user.email tester@example.com
+  git -C "$dir" remote add origin https://github.example.local/o/r.git
+  echo a > "$dir/a.txt"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m A
+  if [[ $upstream != no-upstream ]]; then
+    git -C "$dir" config "branch.$branch.remote" origin
+    git -C "$dir" config "branch.$branch.merge" "refs/heads/$branch"
+    git -C "$dir" update-ref "refs/remotes/origin/$branch" HEAD
+  fi
+  printf '%s\n' "$dir"
+  return 0
+}
+pf_cp_repo=$(pf_branch_repo feat)
 
 # pf_stub: the fake gh answers the login and the repository
 pf_stub() {
@@ -1216,11 +1499,14 @@ pf_stub() {
   return 0
 }
 
-# pf_run <stub-dir> <tmp-dir> <arguments...>: runs preflight.sh in the repository with the fake gh and its own TMPDIR
+# pf_run <stub-dir> <tmp-dir> <arguments...>: runs preflight.sh with the fake gh and its own TMPDIR, in the branch repository for create-pr
+# (PF_REPO overrides it) and in the plain one for review-pr; the fetch of the branch check is skipped
 pf_run() {
-  local stub=$1 work_dir=$2
+  local stub=$1 work_dir=$2 repo=$pf_repo skill
   shift 2
-  STUB_GH_DIR="$stub" TMPDIR="$work_dir" PLAIN_DIR="$pf_repo" run_plain "$preflight_script" "$@"
+  skill=${1:-}
+  [[ $skill != create-pr ]] || repo=$pf_cp_repo
+  STUB_GIT_FETCH=skip STUB_GH_DIR="$stub" TMPDIR="$work_dir" PLAIN_DIR="${PF_REPO:-$repo}" run_plain "$preflight_script" "$@"
   return 0
 }
 
@@ -1238,9 +1524,9 @@ expect_no_pr_folder() {
 
 pf_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
 stub=$(pf_stub)
-pf_run "$stub" "$pf_tmp" create-pr origin
+pf_run "$stub" "$pf_tmp" create-pr
 pf_dir=$(jq -r '.prDir' "$tmp/data.out")
-if [[ $DATA_CODE -eq 0 ]] && jq -e --arg dir "$pf_dir" '. == {skill: "create-pr", remote: "origin", remoteUrl: "https://github.example.local/o/r.git", host: "github.example.local", username: "reviewer1", repoUrl: "https://github.example.local/o/r", repoPath: "o/r", defaultBranch: "main", prDir: $dir}' "$tmp/data.out" > /dev/null; then
+if [[ $DATA_CODE -eq 0 ]] && jq -e --arg dir "$pf_dir" '. == {skill: "create-pr", remote: "origin", remoteUrl: "https://github.example.local/o/r.git", host: "github.example.local", username: "reviewer1", repoUrl: "https://github.example.local/o/r", repoPath: "o/r", defaultBranch: "main", prDir: $dir, branch: "feat", remoteBranch: "feat"}' "$tmp/data.out" > /dev/null; then
   report "preflight/create-pr: the printed JSON" ok
 else
   report "preflight/create-pr: the printed JSON" fail "exit $DATA_CODE: $(cat "$tmp/data.out") $(cat "$tmp/data.err")"
@@ -1253,18 +1539,18 @@ expect_call "preflight/create-pr: login is read on the host of the remote" "$stu
 expect_call "preflight/create-pr: the repository is read from the remote URL" "$stub" "repo view https://github.example.local/o/r.git"
 
 pf_run "$stub" "$pf_tmp" review-pr origin
-jq -e '.skill == "review-pr" and (.prDir | test("/review-pr-[A-Za-z0-9]+$"))' "$tmp/data.out" > /dev/null &&
+jq -e '.skill == "review-pr" and (.prDir | test("/review-pr-[A-Za-z0-9]+$")) and (has("branch") | not) and (has("remoteBranch") | not)' "$tmp/data.out" > /dev/null &&
   report "preflight/review-pr: folder prefix and skill" ok ||
   report "preflight/review-pr: folder prefix and skill" fail "$(cat "$tmp/data.out") $(cat "$tmp/data.err")"
 
 # every failure leaves no folder behind and names the skill in the hint
 pf_case_tmp=$(mktemp -d "$tmp/pf-case-XXXXXX")
-PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr origin
+PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr
 expect_error "preflight/outside a repository" 1 other false
 expect_error_message "preflight/outside a repository, hint names the skill" '`/create-pr`'
 expect_no_pr_folder "preflight/outside a repository makes no folder" "$pf_case_tmp"
 
-pf_run "$stub" "$pf_case_tmp" create-pr nowhere
+pf_run "$stub" "$pf_case_tmp" review-pr nowhere
 expect_error "preflight/unknown remote" 1 other false
 expect_error_message "preflight/unknown remote, message" "No remote named nowhere"
 expect_no_pr_folder "preflight/unknown remote makes no folder" "$pf_case_tmp"
@@ -1278,13 +1564,13 @@ expect_no_pr_folder "preflight/auth failure makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository with the name 'o/r'."
-pf_run "$stub" "$pf_case_tmp" create-pr origin
+pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error "preflight/repository not found" 11 not_found false
 expect_no_pr_folder "preflight/repository not found makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":null}' > "$stub/repo-view.out"
-pf_run "$stub" "$pf_case_tmp" create-pr origin
+pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error "preflight/repository without a default branch" 1 other false
 expect_error_message "preflight/repository without a default branch, message" "no default branch"
 expect_no_pr_folder "preflight/repository without a default branch makes no folder" "$pf_case_tmp"
@@ -1292,19 +1578,39 @@ expect_no_pr_folder "preflight/repository without a default branch makes no fold
 stub=$(pf_stub)
 pf_blocked=$(mktemp -d "$tmp/pf-blocked-XXXXXX")
 : > "$pf_blocked/dotclaude-dev"
-pf_run "$stub" "$pf_blocked" create-pr origin
+pf_run "$stub" "$pf_blocked" create-pr
 expect_error "preflight/temporary folder cannot be created" 1 other false
 expect_error_message "preflight/temporary folder cannot be created, message" "temporary folder"
 
 pf_run "$stub" "$pf_case_tmp" other-skill origin
 expect_error "preflight/usage: unknown skill" 2 usage false
-pf_run "$stub" "$pf_case_tmp" create-pr
-expect_error "preflight/usage: one argument" 2 usage false
-pf_run "$stub" "$pf_case_tmp" create-pr origin extra
+pf_run "$stub" "$pf_case_tmp" review-pr
+expect_error "preflight/usage: review-pr without a remote" 2 usage false
+pf_run "$stub" "$pf_case_tmp" create-pr origin
+expect_error "preflight/usage: create-pr finds its remote itself" 2 usage false
+pf_run "$stub" "$pf_case_tmp" review-pr origin extra
 expect_error "preflight/usage: three arguments" 2 usage false
 expect_error_message "preflight/usage: the message names the script and its arguments, nothing else" \
-  "Wrong arguments. Usage: preflight.sh <skill> <remote>, see the header of the script."
+  "Wrong arguments. Usage: preflight.sh create-pr | review-pr <remote>, see the header of the script."
 expect_no_pr_folder "preflight/usage errors make no folder" "$pf_case_tmp"
+
+# create-pr: the branch checks come first, so a failure makes no gh call and no folder
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo loose no-upstream) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error "preflight/create-pr: a branch without upstream" 1 other false
+expect_error_message "preflight/create-pr: a branch without upstream, message" "has no remote tracking branch"
+expect_error_message "preflight/create-pr: a branch without upstream, hint names the skill" '`/create-pr`'
+expect_no_pr_folder "preflight/create-pr: a branch without upstream makes no folder" "$pf_case_tmp"
+[[ ! -f $stub/calls.log ]] && report "preflight/create-pr: a branch without upstream makes no gh call" ok ||
+  report "preflight/create-pr: a branch without upstream makes no gh call" fail "$(cat "$stub/calls.log")"
+
+# create-pr on the default branch: the guard needs the default branch from gh, still no folder
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo main) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error "preflight/create-pr: on the default branch" 1 other false
+expect_error_message "preflight/create-pr: on the default branch, message" "Branch main is the default branch"
+expect_error_message "preflight/create-pr: on the default branch, hint names the skill" '`/create-pr`'
+expect_no_pr_folder "preflight/create-pr: on the default branch makes no folder" "$pf_case_tmp"
 
 # a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
 pf_cred_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
@@ -1312,7 +1618,7 @@ git -C "$pf_cred_repo" init -q
 git -C "$pf_cred_repo" remote add origin https://user:SECRET@github.example.local/o/r.git
 pf_cred_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
 stub=$(pf_stub)
-STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
+STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" review-pr origin
 pf_dir=$(jq -r '.prDir' "$tmp/data.out")
 if [[ $DATA_CODE -eq 0 ]] && ! grep -rq SECRET "$tmp/data.out" "$tmp/data.err" "$pf_dir" "$stub/calls.log" &&
   jq -e '.remoteUrl == "https://github.example.local/o/r.git"' "$pf_dir/preflight.json" > /dev/null; then
@@ -1323,7 +1629,7 @@ fi
 stub=$(new_stub)
 echo reviewer1 > "$stub/api-user.out"
 fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository (repository)"
-STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
+STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" review-pr origin
 if [[ $DATA_CODE -eq 11 ]] && ! grep -q SECRET "$tmp/data.err"; then
   report "preflight/a password in the remote URL is dropped from the error line" ok
 else
@@ -1560,7 +1866,7 @@ PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
 expect_error "pr-refs/preflight.json without a remote" 1 other false
 PLAIN_DIR="$rg_bare" run_plain "$refs_script" "$dir"
 expect_error "pr-refs/outside a repository" 1 other false
-expect_error_message "pr-refs/outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "pr-refs/outside a repository, the contract wording" "$not_in_repo"
 run_plain "$refs_script"
 expect_error "pr-refs/usage: no arguments" 2 usage false
 run_plain "$refs_script" a b
@@ -1600,10 +1906,27 @@ else
 fi
 
 # The setup comes from one preflight call; no host, repository or remote URL is passed around any more
-if grep -qF 'scripts/preflight.sh" create-pr <remote>' "$create_skill" && ! grep -qE 'remote-host\.sh|gh api user|pr-create\.sh" repo|<host>|<repo-url>|<repo-path>|<remote-url>' "$create_skill"; then
+if grep -qF 'scripts/preflight.sh" create-pr' "$create_skill" && ! grep -qF 'scripts/preflight.sh" create-pr <remote>' "$create_skill" &&
+  ! grep -qE 'remote-host\.sh|gh api user|pr-create\.sh" repo|<host>|<repo-url>|<repo-path>|<remote-url>' "$create_skill"; then
   report "skills/create-pr Preconditions use preflight.sh" ok
 else
-  report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing or an old setup call or host variable is left"
+  report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing, still passing a remote, or an old setup call or host variable is left"
+fi
+
+# the branch checks are inside preflight.sh and the open-PR check reads the branch from preflight.json
+if ! grep -qE '@\{u\}|git fetch <remote>|git rev-list|git branch --show-current|gh repo view' "$create_skill" &&
+  grep -qF 'pr-create.sh" list-open-prs <pr-dir>' "$create_skill" && ! grep -qF 'list-open-prs <pr-dir> <branch>' "$create_skill"; then
+  report "skills/create-pr takes branch, remote and default branch from preflight.sh" ok
+else
+  report "skills/create-pr takes branch, remote and default branch from preflight.sh" fail "an old branch check command is left or list-open-prs still gets the branch"
+fi
+
+# Step 8 checks the body with pr-body-check.sh, which also names the files the body misses
+if grep -qF 'scripts/pr-body-check.sh" <pr-dir>' "$create_skill" && grep -qF '`uncovered` is `[]`' "$create_skill" &&
+  ! grep -qF 'scripts/pr-body-parse.jq" <pr-dir>' "$create_skill"; then
+  report "skills/create-pr Step 8 uses pr-body-check.sh" ok
+else
+  report "skills/create-pr Step 8 uses pr-body-check.sh" fail "script call or the uncovered check is missing, or the old parser call is left"
 fi
 
 # Step 5 reads the body format from pr-body.md and Step 8 checks mergeDanger; the skeleton lives only in pr-body.md
