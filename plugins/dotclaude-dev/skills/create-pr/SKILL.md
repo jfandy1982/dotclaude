@@ -12,7 +12,7 @@ argument-hint: '[--issue numbers-or-na] [--alert numbers-or-na]'
 
 ## Preconditions
 
-Run in order. Stop on first failure. Do not output anything while running preconditions — no announcements, no progress, no status, no results for passing checks. When a precondition fails, output only the stop message verbatim, with no prefix, no summary, and no additional explanation.
+Run in order and stop on the first failure. Run the preconditions without announcements or progress text. A failure ends the run with only its stop message. The one exception is a question the precondition itself asks.
 
 **Precondition 1 — Parse arguments**
 

@@ -2006,6 +2006,14 @@ else
   report "skills: create-pr and review-pr carry the same rule for text from GitHub" fail "the rule line is missing or differs in one skill"
 fi
 
+# the silence rule of the preconditions is the same sentence in both skills
+silence_rule='Run in order and stop on the first failure. Run the preconditions without announcements or progress text. A failure ends the run with only its stop message. The one exception is a question the precondition itself asks.'
+if grep -qxF "$silence_rule" "$create_skill" && grep -qxF "$silence_rule" "$review_skill"; then
+  report "skills: create-pr and review-pr word the silence of the preconditions the same" ok
+else
+  report "skills: create-pr and review-pr word the silence of the preconditions the same" fail "the sentence is missing or differs in one skill"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
