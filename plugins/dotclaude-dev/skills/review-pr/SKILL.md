@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Use when reviewing an open pull request created via create-pr, or when asked for a multi-angle review (simplification, silent failures, tests, comments, types) of such a PR.
+description: Use when preparing the review of an open pull request created via create-pr. Currently only prepares an isolated worktree, collects the PR context and lists the changed files; the review itself is not implemented yet. Does not handle drafts, fork PRs or deployment PRs.
 disable-model-invocation: true
 compatibility: Requires git, gh CLI, jq and internet access to GitHub
 argument-hint: '[pr-number-or-url] [review-scope]'
@@ -8,7 +8,7 @@ argument-hint: '[pr-number-or-url] [review-scope]'
 
 # review-pr
 
-Reviews an open PR created with the `create-pr` skill of this plugin, which writes the `## File risk` section this skill reads. It supports the complete lifecycle of a PR review from fetching context into an isolated worktree, reviewing from various angles and verifying findings until (optionally) posting findings as comments.
+Prepares the review of an open PR created with the `create-pr` skill of this plugin, which writes the `## File risk` section this skill reads. Currently it fetches the PR context into an isolated worktree and lists the changed files. Reviewing from various angles, verifying findings and posting them as comments are planned and not implemented yet. Not supported: draft PRs, PRs from forks and deployment PRs.
 
 ## Preconditions
 
