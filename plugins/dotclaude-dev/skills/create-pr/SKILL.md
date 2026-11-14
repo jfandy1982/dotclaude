@@ -170,11 +170,30 @@ The script writes the labels that may be chosen to `<pr-dir>/labels.json` and pr
 - `mode` is `taxonomy` → the printed labels are the ones with `type:` or `aspect:` prefix; use only those. Suppress all other labels (`priority:`, `status:`, community labels).
 - `mode` is `fallback` → no `type:`/`aspect:` labels exist; the printed labels are all repo labels. Skip the enforcement rules below — suggest the most appropriate label from what is available, no minimum-selection required.
 
-**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (`fix:` → `type: bug`, `feat:` → `type: enhancement`, `chore:` → `type: chore`, `docs:` → `type: documentation`, `refactor:` → `type: refactor`); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
+**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (mapped with the table below); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
 
 From the branch context gathered in Step 1 (changed files, diff content), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `aspect:` label. Signal: changed files and diff content, weighed against the fetched label descriptions (Step 4) for topic/area match — e.g. changes concentrated in UI components/templates suggest `aspect: ui`, changes to CLI/API surface suggest `aspect: api`, changes to repo tooling/config suggest `aspect: repo`; a linked CodeQL alert's flagged file path reinforces this same matching (e.g. an alert flagging an auth file alongside a `security` aspect label). No inference is attempted from branch name — too context-dependent to guess reliably. If a linked issue already carries an `aspect:` label that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent diff signal, and surface it alongside the diff-derived guess if the two disagree so the author can pick. If no clear signal, no `aspect:` label is inferred.
 
 If no `type:` label could be inferred, leave the slot empty rather than blocking.
+
+#### Commit type and label
+
+One table, used in both directions: Step 4 maps a commit type to a label, Step 6 maps a label back to a commit type.
+
+| Commit type | Label |
+| --- | --- |
+| `fix` | `type: bug` |
+| `feat` | `type: enhancement` |
+| `chore` | `type: chore` |
+| `docs` | `type: documentation` |
+| `refactor` | `type: refactor` |
+| `test`, `ci`, `build`, `style` | `type: chore` |
+| `perf` | `type: enhancement` |
+
+- Backward, a label gives the first commit type listed for it (`type: bug` → `fix`, `type: enhancement` → `feat`, `type: chore` → `chore`). A label without a row (`type: breaking-change`, `type: dependencies`, `type: deployment`, `type: deprecation`) gives no commit type.
+- A scope in a commit prefix (`fix(ui):`) counts as its type for the label. A scope is kept in the title only if the author typed one.
+- A mapped label that does not exist in the repository is dropped by the verification below, with a note.
+- The table is the default: the diff and the label of a linked issue can still override it, as described above.
 
 #### Verification
 
@@ -241,7 +260,7 @@ Derive the title from the branch context gathered in Step 1 (commit messages, br
 
 Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
 
-No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, leave `<title>` empty: an empty `<title>` is the placeholder that needs author input, surfaced as missing in the Step 7 preview. Never write anything else in its place (no `TODO`, no `<type>: <summary>`).
+No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4), mapped back to a commit type with the table of Step 4. If no `type:` label was selected, or the selected label has no row in the table, leave `<title>` empty: an empty `<title>` is the placeholder that needs author input, surfaced as missing in the Step 7 preview. Never write anything else in its place (no `TODO`, no `<type>: <summary>`).
 
 Format validation against conventional commit format (`<type>(<optional scope>): <description>`) happens in the Step 7 preview, not here.
 

@@ -2026,6 +2026,14 @@ for skill in create-pr review-pr; do
   fi
 done
 
+# one table maps commit types and labels, and Step 6 uses it backward
+if grep -qF '| `test`, `ci`, `build`, `style` | `type: chore` |' "$create_skill" && grep -qF 'mapped back to a commit type with the table of Step 4' "$create_skill" &&
+  ! grep -qF '`feat:` → `type: enhancement`' "$create_skill"; then
+  report "skills/create-pr one table maps commit types and labels in both directions" ok
+else
+  report "skills/create-pr one table maps commit types and labels in both directions" fail "table row or the backward use in Step 6 missing, or the old inline mapping is left"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
