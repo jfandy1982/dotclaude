@@ -1005,6 +1005,119 @@ expect_error "branch-diff/usage: files with too few arguments" 2 usage false
 run_plain "$diff_script" file origin main
 expect_error "branch-diff/usage: file with too few arguments" 2 usage false
 
+# ---- pr-body-check.sh ----
+# The body of create-pr must name every changed file: as its path, below a directory entry, or in a brace pattern.
+
+bc_script="$root/plugins/dotclaude-dev/scripts/pr-body-check.sh"
+
+# bc_run <file-table-json>: the body comes from stdin; runs the check in a fresh folder
+bc_run() {
+  local dir
+  dir=$(mktemp -d "$tmp/bc-XXXXXX")
+  cat > "$dir/body.txt"
+  printf '%s\n' "$1" > "$dir/file-table.json"
+  run_plain "$bc_script" "$dir"
+  return 0
+}
+
+bc_run '[{"path":"a.ts"},{"path":"b.ts"},{"path":"my file.txt"}]' << 'EOF'
+## What
+
+x
+
+## Why
+
+y
+
+## File risk
+
+### 🔴 Critical
+
+- `a.ts` — changed
+
+### 🟡 Medium
+
+- `my file.txt` — changed
+
+### 🟢 Low
+
+- `b.ts` — changed
+EOF
+expect_jq "pr-body-check/every file has its own entry" '.uncovered == [] and .fileRisk.state == "ok"'
+
+bc_run '[{"path":"src/dir/x.ts"},{"path":"src/dir/sub/y.ts"},{"path":"src/dir2/z.ts"}]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `src/dir/` — the folder (2 files)
+EOF
+expect_jq "pr-body-check/a directory entry covers what is below it and not a sibling directory with the same start" '.uncovered == ["src/dir2/z.ts"]'
+
+bc_run '[{"path":"src/app/foo/foo.component.ts"},{"path":"src/app/foo/foo.component.spec.ts"},{"path":"src/app/foo/foo.component.html"},{"path":"src/app/foo/bar.component.ts"}]' << 'EOF'
+## File risk
+
+### 🟡 Medium
+
+- `src/app/foo/foo.component.{ts,spec.ts}` — the component (2 files)
+EOF
+expect_jq "pr-body-check/a brace pattern covers exactly its expansions" '.uncovered == ["src/app/foo/foo.component.html", "src/app/foo/bar.component.ts"]'
+
+bc_run '[{"path":"a.ts"},{"path":"yarn.lock"},{"path":"new/name.ts","renamedFrom":"old/name.ts"}]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `a.ts` — changed
+- `old/name.ts` — renamed
+EOF
+expect_jq "pr-body-check/a generated file and a rename need an entry, the old path does not count" '.uncovered == ["yarn.lock", "new/name.ts"]'
+
+bc_run '[{"path":"a.ts"}]' << 'EOF'
+## What
+
+no file risk section at all
+EOF
+expect_jq "pr-body-check/without a File risk section nothing is covered" '.uncovered == ["a.ts"] and .fileRisk.state == "missing"'
+
+bc_run '[]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `extra.ts` — not part of the table
+EOF
+expect_jq "pr-body-check/an entry for an unchanged file is not an error" '.uncovered == []'
+
+bc_run '[{"path":"a.ts"}]' << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `a.ts` — changed
+
+## Merge danger
+
+Drops the column.
+
+## Closes
+
+Closes #4
+EOF
+expect_jq "pr-body-check/the parser result is part of the output" '.mergeDanger == "Drops the column." and .closes.numbers == [4]'
+
+bc_dir=$(mktemp -d "$tmp/bc-XXXXXX")
+run_plain "$bc_script" "$bc_dir"
+expect_error "pr-body-check/no body.txt" 1 other false
+printf '%s\n' '## File risk' > "$bc_dir/body.txt"
+run_plain "$bc_script" "$bc_dir"
+expect_error "pr-body-check/no file-table.json" 1 other false
+printf '%s\n' 'not json' > "$bc_dir/file-table.json"
+run_plain "$bc_script" "$bc_dir"
+expect_error "pr-body-check/file-table.json is not JSON" 1 other false
+run_plain "$bc_script"
+expect_error "pr-body-check/usage: no arguments" 2 usage false
+
 # ---- pr-checklist-parse.jq ----
 
 checklist_parser="$root/plugins/dotclaude-dev/scripts/pr-checklist-parse.jq"
