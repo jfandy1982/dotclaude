@@ -2100,6 +2100,15 @@ else
   report "root README: points to the plugin README, heading matches the marketplace, at least 40 words" fail "link, heading or word count is wrong"
 fi
 
+# the manifest names the author like the marketplace owner, and the manifest description equals the marketplace entry
+manifest="$root/plugins/dotclaude-dev/.claude-plugin/plugin.json"
+if [[ $(jq -r '.author.name' "$manifest") == "$(jq -r '.owner.name' "$root/.claude-plugin/marketplace.json")" ]] &&
+  [[ $(jq -r '.description' "$manifest") == "$marketplace_description" ]]; then
+  report "plugin.json: author is the marketplace owner, description equals the marketplace entry" ok
+else
+  report "plugin.json: author is the marketplace owner, description equals the marketplace entry" fail "author or description differs"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
