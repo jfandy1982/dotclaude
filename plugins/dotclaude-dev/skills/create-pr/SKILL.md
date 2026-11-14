@@ -53,6 +53,8 @@ The script prints the open PRs of the branch as a JSON array of `{number, title,
 
 Run these steps in this exact order. Inference in Steps 4–7 (labels, file risk, title, body) runs silently — no `AskUserQuestion` stops until the Step 7 combined preview loop. Missing or invalid results are not fixed inline; they are surfaced and corrected in that loop.
 
+**Answers to dialogs.** Offer exactly the options named in each question. An answer that is none of them, such as "Other" with free text or a dismissed dialog, is never a choice and never guesses a number from free text. For a question about one number the safe default is "Drop it": a dropped number can be added again in the loop, a wrongly kept one would end up in the PR. Every other dialog asks the same question again.
+
 ### Step 1 — Gather branch context
 
 ```bash
@@ -105,7 +107,7 @@ For each number, run one command (they are independent, so they may run in paral
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
 ```
 
-- Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
+- Exit 11 (`not_found`) → ask with `AskUserQuestion` ("Issue #N was not found. Correct the number or drop it?") with options "Correct the number" (ask for the new number as a plain text prompt, check and clean it like the first answer, then run the command for it) / "Drop it" (remove it from the list). Not a hard block.
 - Any other non-zero exit → stop, as described in Precondition 2.
 - State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `OPEN` → keep it.
@@ -133,7 +135,7 @@ Check and clean the answer exactly as in Step 2 (`N/A` in any case means none; o
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
 ```
 
-- Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
+- Exit 11 (`not_found`) → ask with `AskUserQuestion` ("Alert #N was not found. Correct the number or drop it?" The alert may not exist, code scanning may be off, or you may lack access) with options "Correct the number" (ask for the new number as a plain text prompt, check and clean it like the first answer, then run the command for it) / "Drop it" (remove it from the list). Not a hard block.
 - Any other non-zero exit → stop, as described in Precondition 2.
 - State other than `open` (`fixed`, `dismissed`) → ask with `AskUserQuestion` ("Alert #N is already <state> — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `open` → keep it.
@@ -151,13 +153,7 @@ Read the file `<pr-dir>/alert-<N>.json` of every kept alert once and keep its `s
 
 There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing branch/PR to an alert automatically once a scan of that branch clears the alert's fingerprint; this is not settable via `gh api`/`gh pr create`, so `create-pr` does not attempt it and adds no PR body section for alerts.
 
-**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `url` (from `<codeql-context>`) and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then ask with `AskUserQuestion`:
-
-- Question: "Assign yourself to each linked alert and link this branch under its Development section (both in the GitHub UI), then continue."
-- Options:
-  - "Done, continue" — the only option; proceed to Step 4
-
-This is not verified — `create-pr` has no way to check either action happened — it is an explicit acknowledgment gate, not a hard block on unconfirmed state.
+**Manual steps for linked alerts.** The alert's own assignee and its Development-section branch link are GitHub UI-only actions with no API equivalent, and `create-pr` cannot verify them. They do not stop the flow: keep the `url` of every kept alert (from `<codeql-context>`) for the final message of Step 8.
 
 ### Step 4 — Label selection
 
@@ -186,12 +182,14 @@ Whenever a label is set or changed (initial inference, or a correction made in t
 jq --arg name "<label-name>" 'any(.[]; .name == $name)' <pr-dir>/labels.json
 ```
 
-`true` → the name matches an existing label, proceed. `false` → warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
+`true` → the name matches an existing label, proceed. `false` → do not ask: leave the label out of `<selected-labels>` and keep the note "Label `<name>` does not exist, dropped." for the Step 7 preview. Never pass an unknown label name to `gh pr create`.
 
 **Enforcement** (standard mode only):
 
-- If no `type:` label was selected, warn the author but do not block — labels can be adjusted on the PR afterward.
-- `type: deployment` cannot be combined with any other `type:` label. If selected alongside another type, warn and ask the author to resolve the conflict before proceeding.
+- If no `type:` label was selected, keep the note "No `type:` label selected." for the Step 7 preview. This does not block — labels can be adjusted on the PR afterward.
+- `type: deployment` cannot be combined with any other `type:` label. If both are selected, keep the selection and the note "Conflict: `type: deployment` cannot be combined with `<other label>`." for the Step 7 preview. This blocks Step 8 until the author has resolved it in the loop.
+
+Steps 4 to 6 ask nothing: every note is shown in the Step 7 preview and corrected there.
 
 Store the final label set as `<selected-labels>`.
 
@@ -260,26 +258,37 @@ Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5
 
 Assemble `<body>` from the sections in `pr-body.md`, in the order given there: What and Why from above, `<file-risk>` from Step 5, then Merge danger from `<merge-danger>`, Closes from `<closes>` and PR checklist from `<pr-checklist>`, each of the last three omitted when its value is empty. Follow the skeleton there exactly.
 
-Default `<draft-state>` to "ready for review".
+Default `<draft-state>` to "Ready for review". It has exactly two values, "Draft" and "Ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. Show the notes kept in Step 4 as well (a dropped label, a missing `type:` label, a `type: deployment` conflict). If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
-Ask with `AskUserQuestion`:
+Ask with `AskUserQuestion` (single-select):
 
 - Question: "Does this PR look right?"
 - Put the full combined preview text into the `preview` field of every option, so it is visible in the dialog whichever option has focus; do not also print it as text above the dialog.
-- Options:
+- Options (four, the most a dialog allows):
   - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 8
-  - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Merge danger. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
-  - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / CodeQL alert links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 4 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; CodeQL alert-link corrections still go through the Step 3 not-found/already-fixed-or-dismissed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
+  - "Change body" — the section dialog below
+  - "Change title or labels" — the title and labels dialog below
+  - "Change links or draft state" — the links dialog below
+
+The three follow-up dialogs are single-select too, so each option can carry a `preview` with the current text of what it changes. The author picks one entry, you ask for the correction as a plain text prompt, apply it, re-render the combined preview and ask the question above again. To change several things, the author goes round the loop again.
+
+| Dialog | Options | Preview of each option | The correction |
+| --- | --- | --- | --- |
+| Change body | What, Why, File risk, Merge danger | the current text of that section (Merge danger: "(none, two-way)" when empty) | updates `<body>`; File risk keeps the format of `pr-body.md` |
+| Change title or labels | Title, Labels | the current `<title>` (or "(missing, needs your input)"), the current `<selected-labels>` | a corrected label goes through the Step 4 verification, a failing one is not set and the preview says so |
+| Change links or draft state | Issue links, CodeQL alert links, Draft or ready | the current `Closes` lines (or "none"), the current alerts (or "none"), the current `<draft-state>` | see below |
+
+A corrected issue or alert list goes through the checks of Step 2 or 3 (not found, already closed, fixed or dismissed). Then rebuild only what is derived from the links mechanically: `<closes>`, `<issue-context>` or `<codeql-context>`, and the `## Closes` section. The Why, the labels and the title are not re-derived: the author already approved them. Add the note "Why, labels and title were not re-derived from the new links." to the next preview. "Draft or ready" toggles `<draft-state>` between "Draft" and "Ready for review".
 
 Loop has no fixed iteration cap — repeat until the author chooses "Looks good, create it."
 
 ### Step 8 — Create PR
 
-`<title>` is empty → write nothing: go back to the loop above and ask for the title under "Change something else".
+`<title>` is empty, or the `type: deployment` conflict of Step 4 is unresolved → write nothing: go back to the loop above and ask for the title or the labels under "Change title or labels".
 
 Write `<title>` as plain text to `<pr-dir>/title.txt` and `<body>` to `<pr-dir>/body.txt` with the Write tool, exactly as shown in the preview. Never put title or body into a shell command: both contain backticks, which the shell would run.
 
@@ -297,4 +306,4 @@ Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <pr-dir> <yes|no> ["<label>" ...]
 ```
 
-Display the PR URL.
+Display the PR URL. If at least one CodeQL alert was kept, add below it, for each alert: "Still to do in the GitHub UI for alert #<N> (`<url>`): assign yourself to it and link branch `<branch>` under its Development section."

@@ -1961,6 +1961,43 @@ else
   report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" fail "script call missing or a raw git fetch/merge-base or the base branch placeholder is left"
 fi
 
+# the dialog questions: one rule for unexpected answers, named options for the not-found questions of issues and alerts
+if grep -qF '**Answers to dialogs.**' "$create_skill" && [[ $(grep -cF '"Correct the number"' "$create_skill") -eq 2 ]] &&
+  [[ $(grep -cF '"Drop it" (remove it from the list)' "$create_skill") -ge 4 ]]; then
+  report "skills/create-pr dialogs: one rule for other answers, named options for not found and closed" ok
+else
+  report "skills/create-pr dialogs: one rule for other answers, named options for not found and closed" fail "rule or option names missing in Steps 2 and 3"
+fi
+
+# the one-option gate for linked alerts is gone: the to-dos come after the PR URL
+if ! grep -qF 'Done, continue' "$create_skill" && grep -qF 'Still to do in the GitHub UI for alert' "$create_skill"; then
+  report "skills/create-pr alert to-dos are a closing message, not a one-option dialog" ok
+else
+  report "skills/create-pr alert to-dos are a closing message, not a one-option dialog" fail "the gate text is left or the closing message is missing"
+fi
+
+# Steps 4 to 6 stay silent: label problems become notes in the preview, and the deployment conflict blocks Step 8
+if ! grep -qE 'warn the author|warn and ask' "$create_skill" && grep -qF 'Label `<name>` does not exist, dropped.' "$create_skill" &&
+  grep -qF 'This blocks Step 8 until the author has resolved it' "$create_skill"; then
+  report "skills/create-pr Step 4 asks nothing: notes for the preview, the conflict blocks Step 8" ok
+else
+  report "skills/create-pr Step 4 asks nothing: notes for the preview, the conflict blocks Step 8" fail "an ask in Step 4 is left or a note or the block is missing"
+fi
+
+# the Step 7 loop: four single-select options at most, a preview in the follow-up dialogs, two draft-state literals
+if ! grep -qiE 'multiselect|multi-select|Change something else' "$create_skill" &&
+  grep -qF '"Change title or labels"' "$create_skill" && grep -qF '"Change links or draft state"' "$create_skill" &&
+  grep -qF 'Add the note "Why, labels and title were not re-derived from the new links."' "$create_skill"; then
+  report "skills/create-pr loop: four single-select options, follow-up dialogs with previews" ok
+else
+  report "skills/create-pr loop: four single-select options, follow-up dialogs with previews" fail "a multi-select or the old option is left, or a new option or the re-derive note is missing"
+fi
+if ! grep -qF 'ready for review' "$create_skill" && grep -qF '"Ready for review"' "$create_skill" && grep -qF '"Draft"' "$create_skill"; then
+  report "skills/create-pr draft state has the two literals Draft and Ready for review" ok
+else
+  report "skills/create-pr draft state has the two literals Draft and Ready for review" fail "a lower-case spelling is left or a literal is missing"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
