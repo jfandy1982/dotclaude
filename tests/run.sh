@@ -2066,6 +2066,16 @@ else
   report "skills/create-pr and doctor: checklist state, folder inventory, deletion row, descriptions" fail "a state variable, the inventory, the deletion row or a description sentence is missing, or the limit note is left"
 fi
 
+# doctor: unreadable plugin list, narrowest scope wins, GitHub login with the check preflight makes, honest intro, one self sentence
+if grep -qF 'every plugin gets the status `unknown`' "$doctor_skill" && grep -qF 'the entry with the narrowest scope decides: managed, then local, then project, then user' "$doctor_skill" &&
+  grep -qF 'scripts/remote-host.sh" origin' "$doctor_skill" && grep -qF 'gh api user --hostname "<host>"' "$doctor_skill" &&
+  grep -qF 'changes nothing without your confirmation' "$doctor_skill" && ! grep -qF 'Read-only and safe to repeat' "$doctor_skill" &&
+  [[ $(grep -c 'dotclaude-dev` can only ever resolve' "$doctor_skill") -eq 1 ]] && ! grep -qF 'your plugin habits' "$doctor_skill"; then
+  report "skills/doctor: unknown list, scope rule, login check, honest intro, one self sentence" ok
+else
+  report "skills/doctor: unknown list, scope rule, login check, honest intro, one self sentence" fail "a rule sentence is missing or an old phrase is left"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
