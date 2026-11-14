@@ -17,18 +17,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 main() {
   [[ $# -eq 1 ]] || usage
-  local dir=$1 remote values number head base merge_base
+  local dir=$1 pr_file=pr.json remote values number head base merge_base
   require_repo
   load_preflight "$dir"
   remote=$(jq -r '.remote // empty' "$dir/preflight.json" 2> /dev/null)
   [[ -n $remote ]] || die "preflight.json" "$dir/preflight.json names no remote. Run preflight first."
-  [[ -f $dir/pr.json ]] || die "pr.json" "Folder $dir has no pr.json. Fetch the PR first."
-  values=$(jq -r '(.number | @text), (.headRefOid // ""), (.baseRefName // "")' "$dir/pr.json" 2> /dev/null) ||
-    die "pr.json" "Cannot read $dir/pr.json."
+  [[ -f $dir/$pr_file ]] || die "$pr_file" "Folder $dir has no $pr_file. Fetch the PR first."
+  values=$(jq -r '(.number | @text), (.headRefOid // ""), (.baseRefName // "")' "$dir/$pr_file" 2> /dev/null) ||
+    die "$pr_file" "Cannot read $dir/$pr_file."
   { IFS= read -r number; IFS= read -r head; IFS= read -r base; } <<< "$values"
-  [[ $number =~ ^[0-9]+$ ]] || die "pr.json" "$dir/pr.json has no usable PR number."
-  [[ $head =~ ^[0-9a-f]{40,64}$ ]] || die "pr.json" "$dir/pr.json has no usable head commit."
-  git check-ref-format "refs/heads/$base" 2> /dev/null || die "pr.json" "$dir/pr.json has no usable base branch name."
+  [[ $number =~ ^[0-9]+$ ]] || die "$pr_file" "$dir/$pr_file has no usable PR number."
+  [[ $head =~ ^[0-9a-f]{40,64}$ ]] || die "$pr_file" "$dir/$pr_file has no usable head commit."
+  git check-ref-format "refs/heads/$base" 2> /dev/null || die "$pr_file" "$dir/$pr_file has no usable base branch name."
   VERB=fetch
   run_git "the head of PR $number from $remote" fetch "$remote" "pull/$number/head"
   [[ $(git cat-file -t "$head" 2> /dev/null) == commit ]] ||
