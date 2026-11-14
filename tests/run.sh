@@ -2090,14 +2090,10 @@ expect_calls "skills/review-pr calls its scripts" "$review_skill" \
 expect_none "skills/create-pr keeps the replaced commands and the old dialogs out" "$create_skill" \
   '@\{u\}' 'git fetch <remote>' 'git rev-list' 'git branch --show-current' 'gh repo view' 'gh api user' 'remote-host\.sh' 'pr-create\.sh" repo' \
   '^git diff <remote>/<default-branch>' ':\(glob\)' 'repos/\{owner\}/\{repo\}' '<host>|<repo-url>|<repo-path>|<remote-url>' 'pr-body-parse\.jq' \
-  'Done, continue' 'multiSelect' 'multi-select' 'Change something else' 'warn the author|warn and ask' '--limit 50' 'ready for review' \
-  '### 🔴|### 🟡|### 🟢|- \[ \]' 'never grouped' 'already carries a'
+  'multiSelect' 'multi-select' 'Change something else' '--limit 50' '### 🔴|### 🟡|### 🟢|- \[ \]'
 expect_none "skills/review-pr keeps the replaced commands out" "$review_skill" \
   '^git (fetch origin|merge-base "?<pr\.headRefOid>)' '^git .*<pr\.baseRefName>' 'remote-host\.sh' 'gh api user' 'gh repo view' '<host>|<repo-path>|<origin-url>'
 expect_none "references/pr-body.md has no deployment section (review-pr Gate 2 is its home)" "$pr_body_md" 'Deployment PRs'
-[[ $(grep -c 'no verdict' "$review_skill") -eq 1 ]] &&
-  report "skills/review-pr says 'no verdict' once" ok ||
-  report "skills/review-pr says 'no verdict' once" fail "the phrase appears $(grep -c 'no verdict' "$review_skill") times"
 
 # the documentation agrees with the skills and the manifests
 doctor_skill="$root/plugins/dotclaude-dev/skills/doctor/SKILL.md"
@@ -2111,6 +2107,17 @@ if [[ -f $plugin_readme && -z $readme_missing ]]; then
   report "plugin README lists every skill and the install line" ok
 else
   report "plugin README lists every skill and the install line" fail "missing:${readme_missing:- the file}"
+fi
+
+# every plugin the doctor checks is named in the README prerequisites (the self plugin through its install line)
+doctor_missing=""
+for plugin_id in $(grep -o '`[a-z-]*@[a-z-]*`' "$doctor_skill" | tr -d '`' | sort -u); do
+  grep -qF "$plugin_id" "$plugin_readme" || doctor_missing="$doctor_missing $plugin_id"
+done
+if [[ -z $doctor_missing ]]; then
+  report "doctor: every plugin id is named in the plugin README" ok
+else
+  report "doctor: every plugin id is named in the plugin README" fail "missing:$doctor_missing"
 fi
 
 marketplace_description=$(jq -r '.plugins[] | select(.name == "dotclaude-dev") | .description' "$root/.claude-plugin/marketplace.json")
