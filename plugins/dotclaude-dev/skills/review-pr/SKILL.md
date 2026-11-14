@@ -86,13 +86,13 @@ This gate never stops the skill. When `<pr.author.login>` equals `<username>` (i
 
 **Gate 2 — Deployment PR**
 
-`<pr.isDeployment>` is `true` → skip. This is not an error, so end the skill with only this message:
+`<pr.isDeployment>` is `true` → skip. This is not an error, so end the skill with only this message (a Gate 1 warning that was printed stays):
 
 > "PR `<pr.number>` is a deployment PR (`type: deployment`) — review-pr does not apply."
 
 **Gate 3 — File risk section**
 
-Reads the sections `create-pr` writes into the PR body. The script knows the format; `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md` documents it for maintainers, so do not read that file for this.
+Reads the sections `create-pr` writes into the PR body. The script knows the format, so do not read `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md` for this.
 
 ```bash
 jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-dir>/body.txt
@@ -114,7 +114,11 @@ Collects what the reviewers need to know about the PR. It runs after the content
 
 Prints the summary of `<context>` from Gate 3. A `<context.mergeDanger>` of `null` means a two-way change.
 
-Print the one-line summary as its own message: `PR context: File risk <buckets> · Merge danger: <one-way or none> · Closes: <#numbers or none>`, with `<buckets>` the names of the `<context.fileRisk>` buckets that have entries, in order critical · medium · low, and the numbers from `<context.closes.numbers>`.
+Print the one-line summary as its own message: `PR context: File risk <buckets> · Merge danger: <one-way or two-way> · Closes: <#numbers or none>`, with:
+
+- `<buckets>` the names of the `<context.fileRisk>` buckets that have entries, in order critical · medium · low, or `none` when no bucket has entries.
+- the merge danger word `one-way` when `<context.mergeDanger>` is not `null`, otherwise `two-way`. Print the word only; the justification stays in `<context>`.
+- the numbers from `<context.closes.numbers>`, or `none`.
 
 Then print each warning that applies, as its own line:
 
@@ -175,7 +179,7 @@ Store the final list as `<scopes>`.
 
 ## Workspace
 
-Checks out the PR head in a separate worktree, so the reviewers can read the whole repository. The user's own working tree stays untouched. This skill explicitly instructs the use of the `EnterWorktree` and `ExitWorktree` tools.
+Checks out the PR head in a separate worktree, so the reviewers can read the whole repository. The user's own working tree stays untouched. Use the `EnterWorktree` and `ExitWorktree` tools for this: those tools only run when asked for explicitly, and this skill asks for them.
 
 **Step 1 — Fetch the PR head and find the merge base**
 
