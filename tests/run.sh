@@ -720,6 +720,7 @@ fi
 # ---- pr-create.sh ----
 
 create_script="$root/plugins/dotclaude-dev/scripts/pr-create.sh"
+label_bug='type: bug'
 repo_url=https://github.example.local/o/r
 
 stub=$(new_stub)
@@ -766,17 +767,17 @@ work=$(new_work)
 printf '%s\n' "$title" > "$work/title.txt"
 printf '%s\n' 'body text' > "$work/body.txt"
 printf '%s\n' '[{"name":"type: bug"},{"name":"aspect: ui"},{"name":"we$(ird) `name`"}]' > "$work/labels.json"
-printf '%s\n' 'type: bug' 'aspect: ui' > "$work/labels.txt"
+printf '%s\n' "$label_bug" 'aspect: ui' > "$work/labels.txt"
 run_stub "$stub" "$create_script" create "$work" no
 expect_text "create/stdout is only the URL" "$tmp/data.out" "https://github.example.local/o/r/pull/9"
 expect_call "create/repository, assignee, title and body file" "$stub" "pr create --repo $repo_url --assignee @me --title $title --body-file $work/body.txt"
-expect_call "create/several labels" "$stub" "--label type: bug --label aspect: ui"
+expect_call "create/several labels" "$stub" "--label $label_bug --label aspect: ui"
 expect_no_call "create/no draft flag for no" "$stub" "--draft"
 
 stub=$(new_stub)
-printf '%s\n' 'type: bug' > "$work/labels.txt"
+printf '%s\n' "$label_bug" > "$work/labels.txt"
 run_stub "$stub" "$create_script" create "$work" yes
-expect_call "create/draft with one label" "$stub" "--body-file $work/body.txt --draft --label type: bug"
+expect_call "create/draft with one label" "$stub" "--body-file $work/body.txt --draft --label $label_bug"
 # a label name with shell characters reaches gh as one argument and runs nothing
 stub=$(new_stub)
 printf '%s\n' 'we$(ird) `name`' > "$work/labels.txt"
@@ -784,7 +785,7 @@ run_stub "$stub" "$create_script" create "$work" no
 expect_call "create/a label name with shell characters is one argument" "$stub" '--label we$(ird) `name`'
 # a name that labels.json lacks stops the run before gh is called
 stub=$(new_stub)
-printf '%s\n' 'type: bug' 'no-such-label' > "$work/labels.txt"
+printf '%s\n' "$label_bug" 'no-such-label' > "$work/labels.txt"
 run_stub "$stub" "$create_script" create "$work" no
 expect_error_text "create/an unknown label stops the run" 1 other false 'no-such-label'
 expect_no_call "create/an unknown label makes no gh call" "$stub" "pr create"
@@ -802,7 +803,7 @@ cl_work=$(new_work)
 cp "$work/labels.json" "$cl_work/labels.json"
 work_main=$work
 work=$cl_work
-printf '%s\n' 'type: bug' '' 'no-such-label' 'we$(ird) `name`' 'other' > "$work/labels.txt"
+printf '%s\n' "$label_bug" '' 'no-such-label' 'we$(ird) `name`' 'other' > "$work/labels.txt"
 run_plain "$create_script" check-labels "$work"
 expect_jq "check-labels/lists the names that labels.json lacks, empty lines ignored" '. == {unknown: ["no-such-label", "other"]}'
 : > "$work/labels.txt"
@@ -811,13 +812,13 @@ expect_jq "check-labels/an empty file has no unknown names" '. == {unknown: []}'
 rm "$work/labels.txt"
 run_plain "$create_script" check-labels "$work"
 expect_error_text "check-labels/no labels.txt" 1 other false "no labels.txt"
-printf '%s\n' 'type: bug' > "$work/labels.txt"
+printf '%s\n' "$label_bug" > "$work/labels.txt"
 rm "$work/labels.json"
 run_plain "$create_script" check-labels "$work"
 expect_error_text "check-labels/no labels.json" 1 other false "pr-create.sh labels first"
 run_plain "$create_script" check-labels
 expect_error "check-labels/usage: no folder" 2 usage false
-run_plain "$create_script" create "$work" no "type: bug"
+run_plain "$create_script" create "$work" no "$label_bug"
 expect_error "create/usage: labels are no arguments any more" 2 usage false
 work=$work_main
 
