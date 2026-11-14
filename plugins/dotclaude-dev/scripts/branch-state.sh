@@ -17,10 +17,10 @@ SUBCOMMANDS='[create-pr]'
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 main() {
-  local branch remote merge remote_branch counts behind ahead
+  local skill=${1:-} branch remote merge remote_branch counts behind ahead
   [[ $# -le 1 ]] || usage
-  case ${1:-} in
-    create-pr) SKILL=$1 ;;
+  case $skill in
+    create-pr) SKILL=$skill ;;
     "") ;;
     *) usage ;;
   esac

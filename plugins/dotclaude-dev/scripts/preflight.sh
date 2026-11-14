@@ -22,10 +22,10 @@ SUBCOMMANDS='create-pr | review-pr <remote>'
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 main() {
-  local skill=${1:-} remote="" branch="" remote_branch="" dir state info remote_url host username repo default_branch json
+  local skill=${1:-} second=${2:-} remote="" branch="" remote_branch="" dir state info remote_url host username repo default_branch json
   case $skill in
     create-pr) [[ $# -eq 1 ]] || usage ;;
-    review-pr) [[ $# -eq 2 ]] || usage; remote=$2 ;;
+    review-pr) [[ $# -eq 2 ]] || usage; remote=$second ;;
     *) usage ;;
   esac
   SKILL=$skill

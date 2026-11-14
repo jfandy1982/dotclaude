@@ -14,6 +14,8 @@ export TMPDIR="$tmp"
 passed=0
 failed=0
 SEED_PR_JSON=""
+# the contract wording of require_repo, checked in several sections
+not_in_repo="Not inside a git repository"
 
 # The fake gh replaces the real one in every bash process started below
 source "$root/tests/stub/gh.sh"
@@ -1014,10 +1016,10 @@ bc_script="$root/plugins/dotclaude-dev/scripts/pr-body-check.sh"
 
 # bc_run <file-table-json>: the body comes from stdin; runs the check in a fresh folder
 bc_run() {
-  local dir
+  local table=$1 dir
   dir=$(mktemp -d "$tmp/bc-XXXXXX")
   cat > "$dir/body.txt"
-  printf '%s\n' "$1" > "$dir/file-table.json"
+  printf '%s\n' "$table" > "$dir/file-table.json"
   run_plain "$bc_script" "$dir"
   return 0
 }
@@ -1321,13 +1323,13 @@ expect_error_message "run_git/branch-diff files: the message carries git's reaso
 rg_bare=$(mktemp -d "$tmp/bare-XXXXXX")
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$checklist_script" origin main
 expect_error "run_git/pr-checklist: outside a repository" 1 other false
-expect_error_message "require_repo/pr-checklist: outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "require_repo/pr-checklist: outside a repository, the contract wording" "$not_in_repo"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$(mktemp -d "$tmp/folder-XXXXXX")"
 expect_error "run_git/branch-diff files: outside a repository" 1 other false
-expect_error_message "require_repo/branch-diff files: outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "require_repo/branch-diff files: outside a repository, the contract wording" "$not_in_repo"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" file origin main base.txt
 expect_error "require_repo/branch-diff file: outside a repository" 1 other false
-expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "$not_in_repo"
 
 # ---- branch-state.sh ----
 # The "remotes" are local bare repositories, so the script really fetches from them.
@@ -1358,9 +1360,10 @@ make_bs_repo() {
 
 # bs_commit <repo> <file>: one more commit
 bs_commit() {
-  echo "$2" > "$1/$2"
-  git -C "$1" add -A
-  git -C "$1" commit -q -m "$2"
+  local repo=$1 file=$2
+  echo "$file" > "$repo/$file"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$file"
   return 0
 }
 
@@ -1451,7 +1454,7 @@ expect_error_message "branch-state/the configured remote does not exist, message
 
 PLAIN_DIR="$rg_bare" run_plain "$bs_script"
 expect_error "branch-state/outside a repository" 1 other false
-expect_error_message "branch-state/outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "branch-state/outside a repository, the contract wording" "$not_in_repo"
 run_plain "$bs_script" a b
 expect_error "branch-state/usage: two arguments" 2 usage false
 run_plain "$bs_script" other-skill
@@ -1466,7 +1469,7 @@ git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
 
 # pf_branch_repo <branch> [no-upstream]: a repository for create-pr on that branch; the upstream is origin/<branch>, already fetched
 pf_branch_repo() {
-  local branch=$1 dir
+  local branch=$1 upstream=${2:-} dir
   dir=$(mktemp -d "$tmp/pf-repo-XXXXXX")
   git -C "$dir" init -q
   git -C "$dir" symbolic-ref HEAD "refs/heads/$branch"
@@ -1476,7 +1479,7 @@ pf_branch_repo() {
   echo a > "$dir/a.txt"
   git -C "$dir" add -A
   git -C "$dir" commit -q -m A
-  if [[ ${2:-} != no-upstream ]]; then
+  if [[ $upstream != no-upstream ]]; then
     git -C "$dir" config "branch.$branch.remote" origin
     git -C "$dir" config "branch.$branch.merge" "refs/heads/$branch"
     git -C "$dir" update-ref "refs/remotes/origin/$branch" HEAD
@@ -1499,9 +1502,10 @@ pf_stub() {
 # pf_run <stub-dir> <tmp-dir> <arguments...>: runs preflight.sh with the fake gh and its own TMPDIR, in the branch repository for create-pr
 # (PF_REPO overrides it) and in the plain one for review-pr; the fetch of the branch check is skipped
 pf_run() {
-  local stub=$1 work_dir=$2 repo=$pf_repo
+  local stub=$1 work_dir=$2 repo=$pf_repo skill
   shift 2
-  [[ ${1:-} != create-pr ]] || repo=$pf_cp_repo
+  skill=${1:-}
+  [[ $skill != create-pr ]] || repo=$pf_cp_repo
   STUB_GIT_FETCH=skip STUB_GH_DIR="$stub" TMPDIR="$work_dir" PLAIN_DIR="${PF_REPO:-$repo}" run_plain "$preflight_script" "$@"
   return 0
 }
@@ -1862,7 +1866,7 @@ PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
 expect_error "pr-refs/preflight.json without a remote" 1 other false
 PLAIN_DIR="$rg_bare" run_plain "$refs_script" "$dir"
 expect_error "pr-refs/outside a repository" 1 other false
-expect_error_message "pr-refs/outside a repository, the contract wording" "Not inside a git repository"
+expect_error_message "pr-refs/outside a repository, the contract wording" "$not_in_repo"
 run_plain "$refs_script"
 expect_error "pr-refs/usage: no arguments" 2 usage false
 run_plain "$refs_script" a b
