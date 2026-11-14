@@ -51,7 +51,7 @@ main() {
     printf '%s\n' '{"state":"none","items":[]}'
     return 0
   fi
-  parsed=$(jq -Rs -f "$(dirname "${BASH_SOURCE[0]}")/pr-checklist-parse.jq" "$top/CLAUDE.md") ||
+  parsed=$(jq -Rs -f "$(dirname "${BASH_SOURCE[0]}")/pr-checklist-parse.jq" "$top/CLAUDE.md" 2> /dev/null) ||
     die "checklist" "Cannot read the checklist table of $top/CLAUDE.md."
   state=$(printf '%s' "$parsed" | jq -r '.state')
   # no rows: nothing to ask git, so the remote-tracking branch is not needed

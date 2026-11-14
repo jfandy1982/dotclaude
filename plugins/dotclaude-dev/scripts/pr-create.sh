@@ -25,9 +25,9 @@ cmd_labels() {
   run_gh "labels of $REPO_URL" label list --repo "$REPO_URL" --json name,description --limit 50
   result=$(printf '%s' "$OUT" | jq -c '
     [.[] | select(.name | startswith("type:") or startswith("aspect:"))] as $taxonomy
-    | if ($taxonomy | length) > 0 then {mode: "taxonomy", labels: $taxonomy} else {mode: "fallback", labels: .} end') ||
+    | if ($taxonomy | length) > 0 then {mode: "taxonomy", labels: $taxonomy} else {mode: "fallback", labels: .} end' 2> /dev/null) ||
     die "labels of $REPO_URL" "Cannot read the labels returned by gh."
-  chosen=$(printf '%s' "$result" | jq -c '.labels') || die "labels of $REPO_URL" "Cannot read the labels returned by gh."
+  chosen=$(printf '%s' "$result" | jq -c '.labels' 2> /dev/null) || die "labels of $REPO_URL" "Cannot read the labels returned by gh."
   write_file "$dir" labels.json "$chosen"
   printf '%s\n' "$result"
   return 0

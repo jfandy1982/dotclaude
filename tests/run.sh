@@ -374,6 +374,14 @@ cp "$fixtures/gh/pulls.json" "$stub/api-pulls.out"
 run_data "$stub" pr 7 PR_DIR
 expect_text "pr/null body gives an empty body.txt" "$PR_DIR/body.txt" ""
 
+# a PR answer without labels cannot be turned into the PR data: nothing is written
+stub=$(new_stub)
+jq 'del(.labels)' "$fixtures/gh/pr-base.json" > "$stub/pr-view.out"
+cp "$fixtures/gh/pulls.json" "$stub/api-pulls.out"
+run_data "$stub" pr 7 PR_DIR
+expect_error_text "pr/an answer without labels is refused, nothing written" 1 other false "Cannot read the PR data"
+[[ ! -e $PR_DIR/pr.json ]] && report "pr/an answer without labels writes no pr.json" ok || report "pr/an answer without labels writes no pr.json" fail "pr.json exists"
+
 # ---- pr-data.sh: issue, ci, feedback ----
 
 stub=$(new_stub)
@@ -1174,13 +1182,13 @@ expect_jq "pr-body-check/the parser result is part of the output" '.mergeDanger 
 
 bc_dir=$(mktemp -d "$tmp/bc-XXXXXX")
 run_plain "$bc_script" "$bc_dir"
-expect_error "pr-body-check/no body.txt" 1 other false
+expect_error_text "pr-body-check/no body.txt" 1 other false "has no body.txt"
 printf '%s\n' '## File risk' > "$bc_dir/body.txt"
 run_plain "$bc_script" "$bc_dir"
-expect_error "pr-body-check/no file-table.json" 1 other false
+expect_error_text "pr-body-check/no file-table.json" 1 other false "has no file-table.json"
 printf '%s\n' 'not json' > "$bc_dir/file-table.json"
 run_plain "$bc_script" "$bc_dir"
-expect_error "pr-body-check/file-table.json is not JSON" 1 other false
+expect_error_text "pr-body-check/file-table.json is not JSON" 1 other false "Cannot read the file table"
 run_plain "$bc_script"
 expect_error "pr-body-check/usage: no arguments" 2 usage false
 
@@ -1388,6 +1396,25 @@ expect_error_text "run_git/branch-diff files: outside a repository" 1 other fals
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" file origin main base.txt
 expect_error_text "require_repo/branch-diff file: outside a repository" 1 other false "$not_in_repo"
 
+# a git call that fails in the middle of a script ends the run with the contract error (the fake git fails the named command)
+for failing in 'check-attr|attributes of' 'diff --no-color|diff of'; do
+  STUB_GIT_FAIL=${failing%%|*} PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$(mktemp -d "$tmp/folder-XXXXXX")"
+  expect_error_text "git failure: branch-diff files when '${failing%%|*}' fails" 1 other false "${failing##*|}"
+done
+STUB_GIT_FAIL='rev-parse --show-toplevel' PLAIN_DIR="$cl_repo" run_plain "$checklist_script" origin main
+expect_error_text "git failure: pr-checklist when 'rev-parse --show-toplevel' fails" 1 other false "repository root"
+
+# the diff folder cannot be created
+if [[ $(id -u) -eq 0 ]]; then
+  echo "skip  branch-diff/the diff folder cannot be created (root ignores folder permissions)"
+else
+  bd_locked=$(mktemp -d "$tmp/folder-XXXXXX")
+  chmod 500 "$bd_locked"
+  PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$bd_locked"
+  chmod 700 "$bd_locked"
+  expect_error_text "branch-diff/the diff folder cannot be created" 1 other false "Cannot create"
+fi
+
 # ---- branch-state.sh ----
 # The "remotes" are local bare repositories, so the script really fetches from them.
 
@@ -1508,6 +1535,11 @@ expect_error "branch-state/usage: two arguments" 2 usage false
 run_plain "$bs_script" other-skill
 expect_error "branch-state/usage: an unknown skill" 2 usage false
 
+for failing in 'branch --show-current|the current branch' 'rev-list --left-right|ahead and behind'; do
+  STUB_GIT_FAIL=${failing%%|*} PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+  expect_error_text "branch-state/git failure when '${failing%%|*}' fails" 1 other false "${failing##*|}"
+done
+
 # ---- preflight.sh ----
 
 preflight_script="$root/plugins/dotclaude-dev/scripts/preflight.sh"
@@ -1596,6 +1628,8 @@ pf_case_tmp=$(mktemp -d "$tmp/pf-case-XXXXXX")
 PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr
 expect_error_text "preflight/outside a repository" 1 other false '`/create-pr`'
 expect_no_pr_folder "preflight/outside a repository makes no folder" "$pf_case_tmp"
+PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" review-pr origin
+expect_error_text "preflight/review-pr outside a repository: the contract wording" 1 other false "$not_in_repo"
 
 pf_run "$stub" "$pf_case_tmp" review-pr nowhere
 expect_error_text "preflight/unknown remote" 1 other false "No remote named nowhere"
@@ -1879,21 +1913,23 @@ PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
 expect_error_text "pr-refs/no common commit" 1 other false "merge base"
 
 # pr.json is read as data: what is not a number or a commit id is refused before git runs
-for bad in '{"number":"7;x","headRefOid":"'"$REFS_F"'","baseRefName":"main"}' '{"number":7,"headRefOid":"not-a-commit","baseRefName":"main"}' '{"number":7,"headRefOid":"'"$REFS_F"'","baseRefName":""}' '{"number":7,"headRefOid":"'"$REFS_F"'"}'; do
+bad_json=('{"number":"7;x","headRefOid":"'"$REFS_F"'","baseRefName":"main"}' '{"number":7,"headRefOid":"not-a-commit","baseRefName":"main"}' '{"number":7,"headRefOid":"'"$REFS_F"'","baseRefName":""}' '{"number":7,"headRefOid":"'"$REFS_F"'"}')
+bad_text=("no usable PR number" "no usable head commit" "no usable base branch name" "no usable base branch name")
+for k in 0 1 2 3; do
   dir=$(refs_folder 7 "$REFS_F" main)
-  printf '%s\n' "$bad" > "$dir/pr.json"
+  printf '%s\n' "${bad_json[$k]}" > "$dir/pr.json"
   PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-  expect_error "pr-refs/unusable pr.json: $bad" 1 other false
+  expect_error_text "pr-refs/unusable pr.json: ${bad_json[$k]}" 1 other false "${bad_text[$k]}"
 done
 
 dir=$(refs_folder 7 "$REFS_F" main)
 rm -f "$dir/pr.json"
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/no pr.json" 1 other false
+expect_error_text "pr-refs/no pr.json" 1 other false "has no pr.json"
 dir=$(refs_folder 7 "$REFS_F" main)
 printf '%s\n' '{"host":"github.example.local","repoUrl":"https://github.example.local/o/r","repoPath":"o/r"}' > "$dir/preflight.json"
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/preflight.json without a remote" 1 other false
+expect_error_text "pr-refs/preflight.json without a remote" 1 other false "names no remote"
 PLAIN_DIR="$rg_bare" run_plain "$refs_script" "$dir"
 expect_error_text "pr-refs/outside a repository" 1 other false "$not_in_repo"
 run_plain "$refs_script"
