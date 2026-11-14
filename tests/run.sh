@@ -1915,14 +1915,14 @@ fi
 
 # the branch checks are inside preflight.sh and the open-PR check reads the branch from preflight.json
 if ! grep -qE '@\{u\}|git fetch <remote>|git rev-list|git branch --show-current|gh repo view' "$create_skill" &&
-  grep -qF 'pr-create.sh" list-open-prs <pr-dir>' "$create_skill" && ! grep -qF 'list-open-prs <pr-dir> <branch>' "$create_skill"; then
+  grep -qF 'pr-create.sh" list-open-prs "<pr-dir>"' "$create_skill" && ! grep -qF 'list-open-prs "<pr-dir>" <branch>' "$create_skill"; then
   report "skills/create-pr takes branch, remote and default branch from preflight.sh" ok
 else
   report "skills/create-pr takes branch, remote and default branch from preflight.sh" fail "an old branch check command is left or list-open-prs still gets the branch"
 fi
 
 # Step 8 checks the body with pr-body-check.sh, which also names the files the body misses
-if grep -qF 'scripts/pr-body-check.sh" <pr-dir>' "$create_skill" && grep -qF '`uncovered` is `[]`' "$create_skill" &&
+if grep -qF 'scripts/pr-body-check.sh" "<pr-dir>"' "$create_skill" && grep -qF '`uncovered` is `[]`' "$create_skill" &&
   ! grep -qF 'scripts/pr-body-parse.jq" <pr-dir>' "$create_skill"; then
   report "skills/create-pr Step 8 uses pr-body-check.sh" ok
 else
@@ -1946,16 +1946,16 @@ else
 fi
 
 # the script calls pass only what the scripts cannot read from preflight.json
-if grep -qF 'scripts/pr-data.sh" pr <pr-arg> <pr-dir>' "$review_skill" &&
-  grep -qF 'scripts/pr-data.sh" issue <issue-number> <pr-dir>' "$review_skill" &&
-  grep -qF 'scripts/pr-data.sh" feedback <pr.number> <pr-dir>' "$review_skill"; then
+if grep -qF 'scripts/pr-data.sh" pr "<pr-arg>" "<pr-dir>"' "$review_skill" &&
+  grep -qF 'scripts/pr-data.sh" issue <issue-number> "<pr-dir>"' "$review_skill" &&
+  grep -qF 'scripts/pr-data.sh" feedback <pr.number> "<pr-dir>"' "$review_skill"; then
   report "skills/review-pr script calls use the short signatures" ok
 else
   report "skills/review-pr script calls use the short signatures" fail "a pr-data.sh call does not match the short signature"
 fi
 
 # the base branch name comes from the PR: the skill never puts it into a command, pr-refs.sh reads it from pr.json
-if grep -qF 'scripts/pr-refs.sh" <pr-dir>' "$review_skill" && ! grep -qE '^git (fetch origin|merge-base <pr\.headRefOid>)|^git .*<pr\.baseRefName>' "$review_skill"; then
+if grep -qF 'scripts/pr-refs.sh" "<pr-dir>"' "$review_skill" && ! grep -qE '^git (fetch origin|merge-base <pr\.headRefOid>)|^git .*<pr\.baseRefName>' "$review_skill"; then
   report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" ok
 else
   report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" fail "script call missing or a raw git fetch/merge-base or the base branch placeholder is left"
@@ -2013,6 +2013,18 @@ if grep -qxF "$silence_rule" "$create_skill" && grep -qxF "$silence_rule" "$revi
 else
   report "skills: create-pr and review-pr word the silence of the preconditions the same" fail "the sentence is missing or differs in one skill"
 fi
+
+# the quoting rule: stated once per skill, and no placeholder that is not a number stands unquoted in a command line
+quote_rule='In every command, put each placeholder that is not a number in double quotes.'
+for skill in create-pr review-pr; do
+  skill_file="$root/plugins/dotclaude-dev/skills/$skill/SKILL.md"
+  unquoted=$(grep -nE '^(bash|git|jq) .*[^"/.]<(pr-dir|pr-arg|remote|default-branch|branch|path|renamedFrom|worktree|merge-base|previous-head|pr\.headRefOid)>' "$skill_file" || true)
+  if grep -qF "$quote_rule" "$skill_file" && [[ -z $unquoted ]]; then
+    report "skills/$skill quotes the placeholders that are not numbers" ok
+  else
+    report "skills/$skill quotes the placeholders that are not numbers" fail "rule sentence missing or unquoted: $unquoted"
+  fi
+done
 
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 

@@ -32,7 +32,7 @@ One script runs every check that needs no judgment, in this order: this is a git
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" create-pr
 ```
 
-Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
+Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is. In every command, put each placeholder that is not a number in double quotes.
 
 The script prints one JSON line. Store `branch` as `<branch>`, `remote` as `<remote>`, `defaultBranch` as `<default-branch>` and `prDir` as `<pr-dir>`. Host, repository URL and path, the login and the branch name on the remote stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
 
@@ -43,7 +43,7 @@ Every stored value is reused in later steps; never re-run a command whose result
 ## Mode Detection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" list-open-prs <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" list-open-prs "<pr-dir>"
 ```
 
 The script prints the open PRs of the branch as a JSON array of `{number, title, url}`.
@@ -60,8 +60,8 @@ Run these steps in this exact order. Inference in Steps 4–7 (labels, file risk
 ### Step 1 — Gather branch context
 
 ```bash
-git log <remote>/<default-branch>..HEAD
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" files <remote> <default-branch> <pr-dir>
+git log "<remote>/<default-branch>..HEAD"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" files "<remote>" "<default-branch>" "<pr-dir>"
 ```
 
 Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); the script diffs against the merge-base, so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
@@ -75,14 +75,14 @@ An empty table (`[]`) → stop:
 - Fields: `path`; `renamedFrom` (old path of a renamed file, else `null`); `added` and `removed` (line counts, `null` for a binary file); `generated`; `diff` (path of the file's diff, or `null`).
 - `diff` is set → read that file, one read per file.
 - `diff` is `null` and `generated` is false → a pure rename: only listed, nothing to read.
-- `generated` is true (a lockfile, or marked `linguist-generated` in `.gitattributes`) → numbers only. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" file <remote> <default-branch> <path> [<renamedFrom>]` only when a step needs the file's content (which package, major bump); pass `renamedFrom` when it is not `null`. Empty output means the path is not part of this PR: re-check the path in `<file-table>`.
+- `generated` is true (a lockfile, or marked `linguist-generated` in `.gitattributes`) → numbers only. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" file "<remote>" "<default-branch>" "<path>" ["<renamedFrom>"]` only when a step needs the file's content (which package, major bump); pass `renamedFrom` when it is not `null`. Empty output means the path is not part of this PR: re-check the path in `<file-table>`.
 
 Read `<branch>` (from Precondition 2), the commit messages, `<file-table>`, and the diffs together. Later steps (label inference, PR title, body sections, file risk) all reason from this combined context.
 
 **Checklist.** The script reads only the repository root `CLAUDE.md` and asks git which checklist rows match the changed files:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-checklist.sh" <remote> <default-branch>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-checklist.sh" "<remote>" "<default-branch>"
 ```
 
 It prints one JSON line `{state, items}`:
@@ -106,7 +106,7 @@ printf '%s\n' <numbers> | sed -e 's/^0*//' -e '/./!d' | sort -nu
 For each number, run one command (they are independent, so they may run in parallel). The script writes `issue-<N>.json` into `<pr-dir>` and prints one line, `#<N> <title> (<STATE>)`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> "<pr-dir>"
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` ("Issue #N was not found. Correct the number or drop it?") with options "Correct the number" (ask for the new number as a plain text prompt, check and clean it like the first answer, then run the command for it) / "Drop it" (remove it from the list). Not a hard block.
@@ -134,7 +134,7 @@ If `<alert-arg>` is set, use it as the author's answer and do not ask. Otherwise
 Check and clean the answer exactly as in Step 2 (`N/A` in any case means none; otherwise digits only, ask again if not, also for `<alert-arg>`, then the cleaning command). For each number, run one command (they are independent, so they may run in parallel). The script writes `alert-<N>.json` into `<pr-dir>` and prints one line, `#<N> <ruleId> (<state>)`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> "<pr-dir>"
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` ("Alert #N was not found. Correct the number or drop it?" The alert may not exist, code scanning may be off, or you may lack access) with options "Correct the number" (ask for the new number as a plain text prompt, check and clean it like the first answer, then run the command for it) / "Drop it" (remove it from the list). Not a hard block.
@@ -160,7 +160,7 @@ There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing bran
 ### Step 4 — Label selection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels "<pr-dir>"
 ```
 
 The script writes the labels that may be chosen to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each of them. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
@@ -181,7 +181,7 @@ If no `type:` label could be inferred, leave the slot empty rather than blocking
 Whenever a label is set or changed (initial inference, or a correction made in the Step 7 loop), verify the label name against `<pr-dir>/labels.json` (the labels the script printed, so in taxonomy mode only `type:` and `aspect:` labels) via `jq`, not by eyeballing the array:
 
 ```bash
-jq --arg name "<label-name>" 'any(.[]; .name == $name)' <pr-dir>/labels.json
+jq --arg name "<label-name>" 'any(.[]; .name == $name)' "<pr-dir>/labels.json"
 ```
 
 `true` → the name matches an existing label, proceed. `false` → do not ask: leave the label out of `<selected-labels>` and keep the note "Label `<name>` does not exist, dropped." for the Step 7 preview. Never pass an unknown label name to `gh pr create`.
@@ -297,7 +297,7 @@ Write `<title>` as plain text to `<pr-dir>/title.txt` and `<body>` to `<pr-dir>/
 Check that the body can be read by the other skills and names every changed file:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-check.sh" <pr-dir>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-check.sh" "<pr-dir>"
 ```
 
 Expected: `fileRisk.state` is `ok`, `uncovered` is `[]`, `closes.numbers` equals the issue numbers in `<closes>`, and `mergeDanger` is `null` exactly when `<merge-danger>` is empty. Anything else means the body drifted from the contract. Correct it yourself first (add the entries for the `uncovered` files, fix the section), write `<pr-dir>/body.txt` again and run the check again; name the correction in one line when you display the PR URL. If the second check fails too, show the difference in the preview, go back to the loop above, and run no `gh pr create`.
@@ -305,7 +305,7 @@ Expected: `fileRisk.state` is `ok`, `uncovered` is `[]`, `closes.numbers` equals
 Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no` otherwise, followed by one argument per label in `<selected-labels>` (none if empty). The script reads both files and prints the PR URL:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <pr-dir> <yes|no> ["<label>" ...]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create "<pr-dir>" <yes|no> ["<label>" ...]
 ```
 
 Display the PR URL. If at least one CodeQL alert was kept, add below it, for each alert: "Still to do in the GitHub UI for alert #<N> (`<url>`): assign yourself to it and link branch `<branch>` under its Development section."
