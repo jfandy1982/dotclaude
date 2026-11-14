@@ -22,7 +22,7 @@ SUBCOMMANDS='create-pr | review-pr <remote>'
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 main() {
-  local skill=${1:-} second=${2:-} remote="" branch="" remote_branch="" dir state info remote_url host username repo default_branch json
+  local skill=${1:-} second=${2:-} remote="" branch="" remote_branch="" name dir state info remote_url host username repo default_branch json
   case $skill in
     create-pr) [[ $# -eq 1 ]] || usage ;;
     review-pr) [[ $# -eq 2 ]] || usage; remote=$second ;;
@@ -45,6 +45,12 @@ main() {
   default_branch=$(printf '%s' "$repo" | jq -r '.defaultBranchRef.name // empty' 2> /dev/null) ||
     die "repository $remote_url" "Cannot read the repository returned by gh."
   [[ -n $default_branch ]] || die "repository $remote_url" "The repository has no default branch."
+  # the skill puts these three into commands (in double quotes): only characters the shell treats as plain text may pass
+  if [[ $skill == create-pr ]]; then
+    for name in "$branch" "$remote" "$default_branch"; do
+      [[ $name =~ ^[A-Za-z0-9._/+@-]+$ ]] || die "branch" "The name \"$name\" has characters this plugin does not support (letters, digits and . _ / + @ - only). Rename it, then $(rerun)."
+    done
+  fi
   [[ $skill != create-pr || $branch != "$default_branch" ]] ||
     die "branch" "Branch $branch is the default branch — create a feature branch first, then $(rerun)."
   [[ $skill != create-pr || $remote_branch != "$default_branch" ]] ||
