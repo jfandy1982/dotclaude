@@ -1961,6 +1961,14 @@ else
   report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" fail "script call missing or a raw git fetch/merge-base or the base branch placeholder is left"
 fi
 
+# the dialog questions: one rule for unexpected answers, named options for the not-found questions of issues and alerts
+if grep -qF '**Answers to dialogs.**' "$create_skill" && [[ $(grep -cF '"Correct the number"' "$create_skill") -eq 2 ]] &&
+  [[ $(grep -cF '"Drop it" (remove it from the list)' "$create_skill") -ge 4 ]]; then
+  report "skills/create-pr dialogs: one rule for other answers, named options for not found and closed" ok
+else
+  report "skills/create-pr dialogs: one rule for other answers, named options for not found and closed" fail "rule or option names missing in Steps 2 and 3"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do

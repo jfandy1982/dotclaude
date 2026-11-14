@@ -53,6 +53,8 @@ The script prints the open PRs of the branch as a JSON array of `{number, title,
 
 Run these steps in this exact order. Inference in Steps 4–7 (labels, file risk, title, body) runs silently — no `AskUserQuestion` stops until the Step 7 combined preview loop. Missing or invalid results are not fixed inline; they are surfaced and corrected in that loop.
 
+**Answers to dialogs.** Offer exactly the options named in each question. An answer that is none of them, such as "Other" with free text or a dismissed dialog, is never a choice and never guesses a number from free text. For a question about one number the safe default is "Drop it": a dropped number can be added again in the loop, a wrongly kept one would end up in the PR. Every other dialog asks the same question again.
+
 ### Step 1 — Gather branch context
 
 ```bash
@@ -105,7 +107,7 @@ For each number, run one command (they are independent, so they may run in paral
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
 ```
 
-- Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
+- Exit 11 (`not_found`) → ask with `AskUserQuestion` ("Issue #N was not found. Correct the number or drop it?") with options "Correct the number" (ask for the new number as a plain text prompt, check and clean it like the first answer, then run the command for it) / "Drop it" (remove it from the list). Not a hard block.
 - Any other non-zero exit → stop, as described in Precondition 2.
 - State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `OPEN` → keep it.
@@ -133,7 +135,7 @@ Check and clean the answer exactly as in Step 2 (`N/A` in any case means none; o
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
 ```
 
-- Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
+- Exit 11 (`not_found`) → ask with `AskUserQuestion` ("Alert #N was not found. Correct the number or drop it?" The alert may not exist, code scanning may be off, or you may lack access) with options "Correct the number" (ask for the new number as a plain text prompt, check and clean it like the first answer, then run the command for it) / "Drop it" (remove it from the list). Not a hard block.
 - Any other non-zero exit → stop, as described in Precondition 2.
 - State other than `open` (`fixed`, `dismissed`) → ask with `AskUserQuestion` ("Alert #N is already <state> — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `open` → keep it.
