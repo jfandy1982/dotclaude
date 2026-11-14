@@ -16,7 +16,7 @@ Each invocation is independent: re-run every Step 1 check live, even if this ski
 
 Run every check below and store each result before moving to Step 2. No fixing yet, no output yet.
 
-**Plugins** — run `claude plugin list --json` once and reuse its output for every plugin below (never once per plugin). If the command fails or its output is not a JSON array, every plugin gets the status `unknown`: nothing is fixed in Step 2, and Step 3 reports "Could not read the plugin list" followed by the first line of its stderr. Otherwise it returns a JSON array of entries with an `id`, a `scope` and a boolean `enabled`. Look up each `id`: no entry → `missing`; one entry → `enabled` or `disabled` by its `enabled` field; several entries for the same `id` (one per scope) → the entry with the narrowest scope decides: managed, then local, then project, then user.
+**Plugins** — run `claude plugin list --json` once and reuse its output for every plugin below (never once per plugin). If the command fails or its output is not a JSON array, every plugin gets the status `unknown`: nothing is fixed in Step 2, and Step 3 reports "Could not read the plugin list" followed by the first line of its stderr. Otherwise it returns a JSON array of entries with an `id`, a `scope` and a boolean `enabled`. Look up each `id`: no entry → `missing`; one entry → `enabled` or `disabled` by its `enabled` field; several entries for the same `id` (one per scope) → the first entry in this order decides: managed, local, project, user.
 
 | Plugin | Category |
 | --- | --- |
@@ -36,7 +36,7 @@ Run every check below and store each result before moving to Step 2. No fixing y
 | `gh` |
 | `jq` |
 
-**GitHub login** — the check `preflight.sh` makes, in the current directory. It runs only inside a git repository that has a remote `origin`; elsewhere, or when `gh` is missing, the status is `not-checked`. Take the host from the second printed line:
+**GitHub login** — the check `preflight.sh` makes, in the current directory. It runs only inside a git repository that has a remote `origin`; elsewhere, or when `gh` is missing, the status is `not-checked`. Like preflight, it covers `origin` only. Take the host from the second printed line:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" origin
@@ -46,7 +46,13 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" origin
 gh api user --hostname "<host>" --jq '.login'
 ```
 
-Success → `logged-in` (keep the login); non-zero exit → `not-logged-in`; the first command fails → `not-checked`.
+Capture the exit code and stderr of each command. Outcomes:
+
+- `gh api` succeeds → `logged-in` (keep the login).
+- `gh api` fails with exit code 4 or `HTTP 401` in stderr → `not-logged-in`.
+- `gh api` fails otherwise (network, rate limit, unknown host) → `not-checked`, reason: the first line of its stderr.
+- The first command fails → `not-checked`, reason: the `message` of the JSON line on its stderr, or its first stderr line.
+- Not in a repository, no `origin` remote, or `gh` missing → `not-checked`, reason: "run the doctor inside a repository that has an `origin` remote".
 
 **Environment variables** — none currently required. Add rows here (checked with `[ -n "${VAR:-}" ]`, always optional) when a shipped skill hard-gates on one.
 
@@ -81,9 +87,9 @@ followed — only when an optional plugin or env var is not clean (`disabled`/`m
 >
 > - `<plugin-or-var>` — `<state>`
 
-Omit that block entirely when every optional item is clean. When the GitHub login was `not-checked`, add one line below: "GitHub login not checked: run the doctor inside a repository that has an `origin` remote."
+Omit that block entirely when every optional item is clean. When the GitHub login was `not-checked`, add one line below: "GitHub login not checked: <reason>." with the reason from Step 1.
 
-Otherwise, show the full itemized breakdown: one line per check, grouped by category, with ✔/✘ markers, including any `fix-failed` message from Step 2 and the "Could not read the plugin list" message when the plugin list was `unknown`.
+Otherwise, show the full itemized breakdown: one line per check, grouped by category, with ✔/✘ markers, including any `fix-failed` message from Step 2 and the "Could not read the plugin list" message when the plugin list was `unknown`. A `not-checked` login gets a `–` marker and its reason; a `not-logged-in` login gets ✘ and the line "Run `gh auth login --hostname <host>`."
 
 ## Maintenance
 
