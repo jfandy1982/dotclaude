@@ -802,6 +802,7 @@ expect_jq "branch-diff/files: hand-written files, numbers and diff files" \
   '. == [{path: "base.txt", renamedFrom: null, added: 1, removed: 0, generated: false, diff: ($d + "/diff/001.diff")},
          {path: "src/a.txt", renamedFrom: null, added: 2, removed: 0, generated: false, diff: ($d + "/diff/002.diff")}]' --arg d "$bd_dir"
 expect_in_file "branch-diff/files: diff file holds the change" "$bd_dir/diff/001.diff" "+two"
+check "branch-diff/files: file-table.json holds the printed table" "$bd_dir/file-table.json" "$tmp/data.out"
 
 # one call per folder: a second call must not mix its files with the first run's
 PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$bd_dir"
