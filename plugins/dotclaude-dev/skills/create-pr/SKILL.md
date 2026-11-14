@@ -258,20 +258,31 @@ Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5
 
 Assemble `<body>` from the sections in `pr-body.md`, in the order given there: What and Why from above, `<file-risk>` from Step 5, then Merge danger from `<merge-danger>`, Closes from `<closes>` and PR checklist from `<pr-checklist>`, each of the last three omitted when its value is empty. Follow the skeleton there exactly.
 
-Default `<draft-state>` to "ready for review".
+Default `<draft-state>` to "Ready for review". It has exactly two values, "Draft" and "Ready for review".
 
 #### Combined preview and confirmation loop
 
 Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. Show the notes kept in Step 4 as well (a dropped label, a missing `type:` label, a `type: deployment` conflict). If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
-Ask with `AskUserQuestion`:
+Ask with `AskUserQuestion` (single-select):
 
 - Question: "Does this PR look right?"
 - Put the full combined preview text into the `preview` field of every option, so it is visible in the dialog whichever option has focus; do not also print it as text above the dialog.
-- Options:
+- Options (four, the most a dialog allows):
   - "Looks good, create it" (Recommended) — exit the loop, proceed to Step 8
-  - "Change body" — second-level AskUserQuestion (multiSelect): which section(s) to change — What / Why / File risk / Merge danger. For each selected section, take a free-text correction from the author and update `<body>` accordingly. Re-render the combined preview and repeat this question.
-  - "Change something else" — second-level AskUserQuestion (multiSelect): which of — Title / Labels / Issue links / CodeQL alert links / Draft or ready for review. For each selected item, take a free-text correction from the author (label corrections still go through the Step 4 verification check; issue-link corrections still go through the Step 2 not-found/already-closed checks; CodeQL alert-link corrections still go through the Step 3 not-found/already-fixed-or-dismissed checks; "Draft or ready for review" toggles `<draft-state>` between "Draft" and "Ready for review"). Re-render the combined preview and repeat this question.
+  - "Change body" — the section dialog below
+  - "Change title or labels" — the title and labels dialog below
+  - "Change links or draft state" — the links dialog below
+
+The three follow-up dialogs are single-select too, so each option can carry a `preview` with the current text of what it changes. The author picks one entry, you ask for the correction as a plain text prompt, apply it, re-render the combined preview and ask the question above again. To change several things, the author goes round the loop again.
+
+| Dialog | Options | Preview of each option | The correction |
+| --- | --- | --- | --- |
+| Change body | What, Why, File risk, Merge danger | the current text of that section (Merge danger: "(none, two-way)" when empty) | updates `<body>`; File risk keeps the format of `pr-body.md` |
+| Change title or labels | Title, Labels | the current `<title>` (or "(missing, needs your input)"), the current `<selected-labels>` | a corrected label goes through the Step 4 verification, a failing one is not set and the preview says so |
+| Change links or draft state | Issue links, CodeQL alert links, Draft or ready | the current `Closes` lines (or "none"), the current alerts (or "none"), the current `<draft-state>` | see below |
+
+A corrected issue or alert list goes through the checks of Step 2 or 3 (not found, already closed, fixed or dismissed). Then rebuild only what is derived from the links mechanically: `<closes>`, `<issue-context>` or `<codeql-context>`, and the `## Closes` section. The Why, the labels and the title are not re-derived: the author already approved them. Add the note "Why, labels and title were not re-derived from the new links." to the next preview. "Draft or ready" toggles `<draft-state>` between "Draft" and "Ready for review".
 
 Loop has no fixed iteration cap — repeat until the author chooses "Looks good, create it."
 

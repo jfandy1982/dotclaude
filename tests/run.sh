@@ -1984,6 +1984,20 @@ else
   report "skills/create-pr Step 4 asks nothing: notes for the preview, the conflict blocks Step 8" fail "an ask in Step 4 is left or a note or the block is missing"
 fi
 
+# the Step 7 loop: four single-select options at most, a preview in the follow-up dialogs, two draft-state literals
+if ! grep -qiE 'multiselect|multi-select|Change something else' "$create_skill" &&
+  grep -qF '"Change title or labels"' "$create_skill" && grep -qF '"Change links or draft state"' "$create_skill" &&
+  grep -qF 'Add the note "Why, labels and title were not re-derived from the new links."' "$create_skill"; then
+  report "skills/create-pr loop: four single-select options, follow-up dialogs with previews" ok
+else
+  report "skills/create-pr loop: four single-select options, follow-up dialogs with previews" fail "a multi-select or the old option is left, or a new option or the re-derive note is missing"
+fi
+if ! grep -qF 'ready for review' "$create_skill" && grep -qF '"Ready for review"' "$create_skill" && grep -qF '"Draft"' "$create_skill"; then
+  report "skills/create-pr draft state has the two literals Draft and Ready for review" ok
+else
+  report "skills/create-pr draft state has the two literals Draft and Ready for review" fail "a lower-case spelling is left or a literal is missing"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
