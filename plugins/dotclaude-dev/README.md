@@ -31,12 +31,12 @@ A skill moves from "in development" to "stable" when a real end-to-end run has p
 
 - **Manual only.** All three skills set `disable-model-invocation: true`: you start them yourself (`/dotclaude-dev:create-pr`, `/dotclaude-dev:review-pr`, `/dotclaude-dev:doctor`), the model never starts them on its own.
 - **Scripts do the deterministic work.** Everything that needs no judgment (preflight checks, reading a PR, diffs, the checklist, the body check, creating the PR) runs as `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh"`. `${CLAUDE_PLUGIN_ROOT}` is replaced by Claude Code in the skill text of an installed plugin.
-- **One error contract.** A failing script prints nothing on stdout and one JSON line on stderr: `{error, exit, retryable, what, message}`. The exit codes are 10 (not logged in), 11 (not found or no access), 12 (rate limit), 13 (network), 2 (wrong arguments) and 1 (anything else). The skill stops with the `message`.
+- **One error contract.** A failing script prints nothing on stdout and one JSON line on stderr (plain text when `jq` itself is missing): `{error, exit, retryable, what, message}`. The exit codes are 10 (not logged in), 11 (not found or no access), 12 (rate limit), 13 (network), 2 (wrong arguments) and 1 (anything else). The skill stops with the `message`.
 - **Testing a checkout.** Start Claude Code with `claude --plugin-dir ./plugins/dotclaude-dev` to run the skills from a working copy instead of the installed version. The script tests run with `npm run test:scripts` in the repository.
 
 ### Temporary files
 
-Each run of `create-pr` or `review-pr` works in a new folder under `$TMPDIR/dotclaude-dev` (`/tmp/dotclaude-dev` when `TMPDIR` is not set), named `create-pr-<random>` or `review-pr-<random>`. It holds what the run collected (`preflight.json`, `pr.json`, `body.txt`, diffs, labels and so on). The scripts never delete anything; cleaning the temporary folder is left to the operating system.
+Each run of `create-pr` or `review-pr` works in a new folder under `$TMPDIR/dotclaude-dev` (`/tmp/dotclaude-dev` when `TMPDIR` is not set), named `create-pr-<random>` or `review-pr-<random>`. It holds what the run collected (`preflight.json`, `pr.json`, `body.txt`, diffs, labels and so on). Every script call also leaves a small `stderr-<random>` file there. The scripts never delete anything; cleaning the temporary folder is left to the operating system.
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ Run `/dotclaude-dev:doctor` inside the repository you want to use: it checks eve
 
 ### Tool versions
 
-The scripts were tested with git 2.43.0, jq 1.7, gh 2.45.0 and bash 5.2. They are written to also run with jq 1.6 and bash 3.2 (macOS) and an older git, but that is not tested: the `prunable` field of `git worktree list --porcelain` and the field `isCrossRepository` of `gh pr list` are assumptions. The doctor checks that the tools exist, not their versions.
+The scripts were tested with git 2.43.0, jq 1.7, gh 2.45.0 and bash 5.2. They are written to also run with jq 1.6 and bash 3.2 (macOS) and an older git, but that is not tested: the `prunable` field of `git worktree list --porcelain` and the field `isCrossRepository` of `gh pr list` (create-pr) and `gh pr view` (review-pr) are assumptions. The doctor checks that the tools exist, not their versions.
 
 ## Known limitations
 

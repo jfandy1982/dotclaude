@@ -1,5 +1,6 @@
 {
   "name": "jfandy1982-dotclaude",
+  "description": "Plugins with skills, agents and hooks for Claude Code",
   "owner": { "name": "jfandy1982" },
   "plugins": [
     {
