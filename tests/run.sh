@@ -2079,7 +2079,7 @@ fi
 # the plugin README is the one home of the operational facts and lists every skill
 plugin_readme="$root/plugins/dotclaude-dev/README.md"
 readme_ok=yes
-for needed in '## Skills' '## How the skills run' '### Temporary files' '## Prerequisites' '### Tool versions' '## Known limitations' 'disable-model-invocation: true' 'The scripts never delete anything' '`doctor`' '`create-pr`' '`review-pr`'; do
+for needed in '## Installation' '/plugin install dotclaude-dev@jfandy1982-dotclaude' '## Skills' '## How the skills run' '### Temporary files' '## Prerequisites' '### Tool versions' '## Known limitations' 'disable-model-invocation: true' 'The scripts never delete anything' '`doctor`' '`create-pr`' '`review-pr`'; do
   grep -qF -- "$needed" "$plugin_readme" || { readme_ok=no; readme_missing=$needed; }
 done
 for skill_dir in "$root"/plugins/dotclaude-dev/skills/*/; do

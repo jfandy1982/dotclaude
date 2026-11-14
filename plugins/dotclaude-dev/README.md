@@ -2,6 +2,15 @@
 
 Opinionated software-development skills for Claude Code. This file is the one home for how the plugin works, what it needs and where it stops.
 
+## Installation
+
+```
+/plugin marketplace add jfandy1982/dotclaude
+/plugin install dotclaude-dev@jfandy1982-dotclaude
+```
+
+Then run `/dotclaude-dev:doctor` inside the repository you want to use.
+
 ## Skills
 
 | Skill | Status | What it does |
