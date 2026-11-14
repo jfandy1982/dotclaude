@@ -508,6 +508,14 @@ else
   report "feedback/asks gh for all pages" fail "$(cat "$stub/calls.log")"
 fi
 
+# 400 inline comments of 1 KB each (400 KB): too large for one jq argument
+stub=$(new_stub)
+jq -nc '[range(400) | {user: {login: "a"}, path: "f", line: 1, body: ("x" * 1000)}]' > "$stub/api-comments.out"
+SEED_PR_JSON="$fixtures/gh/feedback-view.json"
+run_data "$stub" feedback 7 PR_DIR
+SEED_PR_JSON=""
+expect_text "feedback/400 large inline comments" "$tmp/data.out" "1 comments, 1 reviews, 400 inline comments"
+
 stub=$(new_stub)
 printf '%s\n' '[]' > "$stub/api-comments.out"
 printf '%s\n' '{"comments":[],"reviews":[]}' > "$tmp/no-comments.json"
@@ -1205,6 +1213,17 @@ run_plain "$bc_script" "$bc_dir"
 expect_error_text "pr-body-check/file-table.json is not JSON" 1 other false "Cannot read the file table"
 run_plain "$bc_script"
 expect_error "pr-body-check/usage: no arguments" 2 usage false
+
+# a table of about 150 KB (1500 changed files): one jq argument is limited to 128 KB on Linux, so it must be read from a file
+bc_big=$(jq -nc '[range(1500) | {path: ("dir/" + ("x" * 100) + (. | tostring))}]')
+bc_run "$bc_big" << 'EOF'
+## File risk
+
+### 🟢 Low
+
+- `a.ts` — changed
+EOF
+expect_jq "pr-body-check/a large file table (1500 files) is read" '.uncovered | length == 1500'
 
 # ---- pr-checklist-parse.jq ----
 

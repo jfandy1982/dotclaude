@@ -110,11 +110,12 @@ cmd_feedback() {
   # one JSON array per page; slurping joins them
   run_gh "inline comments of PR #$number" api --paginate --hostname "$HOST" "repos/$REPO_PATH/pulls/$number/comments"
   inline=$(printf '%s' "$OUT" | jq -s 'add // []' 2> /dev/null) || die "inline comments of PR #$number" "Cannot read the inline comments returned by gh."
-  result=$(jq --argjson inline "$inline" '{
+  # --slurpfile, not --argjson: a few hundred comments exceed the size of one argument
+  result=$(jq --slurpfile inline <(printf '%s' "$inline") '{
     discussion: {
       comments: [.comments[] | {author: .author.login, body}],
       reviews: [.reviews[] | select(.body != "") | {author: .author.login, state, body}]},
-    inline: [$inline[] | {author: .user.login, path, line, body}]}' "$dir/pr.json" 2> /dev/null) ||
+    inline: [$inline[0][] | {author: .user.login, path, line, body}]}' "$dir/pr.json" 2> /dev/null) ||
     die "prior feedback" "Cannot read the comments in $dir/pr.json."
   write_file "$dir" feedback.json "$result"
   printf '%s' "$result" | jq -r '"\(.discussion.comments | length) comments, \(.discussion.reviews | length) reviews, \(.inline | length) inline comments"' 2> /dev/null ||
