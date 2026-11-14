@@ -223,7 +223,7 @@ If `<resumed>` is true, the worktree must be clean first:
 git status --porcelain
 ```
 
-Any output → call `ExitWorktree` with `keep`, then stop:
+Any output, or a non-zero exit (the state is unknown) → call `ExitWorktree` with `keep`, then stop:
 
 > "The existing worktree `review-pr-<pr.number>` has local changes. Clean it up or remove it, then re-run `/review-pr`."
 
@@ -239,9 +239,20 @@ Non-zero exit → call `ExitWorktree` (`remove` with `discard_changes: true` whe
 git rev-parse --show-toplevel
 ```
 
+Non-zero exit → handle it like the failed checkout: call `ExitWorktree` the same way, then stop:
+
+> "Could not read the path of the worktree `review-pr-<pr.number>`."
+
 Store the printed path as `<worktree>`.
 
-Printing the confirmation is the last action of this step, not a separate step. Your next message after the commands above must be this confirmation, as its own message and before any other question or tool call; a run without it is wrong. This applies to a new and to a resumed worktree alike: the first line tells which one it is. Replace the variables, print every line separately and the title exactly as it is, without quotes or escaping:
+If `<previous-head>` is set, work out the extra line of the confirmation now, before anything is printed:
+
+- `<previous-head>` equals `<pr.headRefOid>` → `Nothing new since the last review.`
+- `git merge-base --is-ancestor <previous-head> <pr.headRefOid>` exits 0 → count with `git rev-list --count <previous-head>..<pr.headRefOid>`: a count of 1 gives `1 new commit since the last review.`, any other count `<commit-count> new commits since the last review.`
+- The same command exits 1 → `The PR was force-pushed: the previously reviewed commit is no longer part of it.`
+- Any other exit code → no extra line.
+
+When all commands above have run, your next message is the confirmation: its own message, before any other question or tool call. A run without it is wrong. This applies to a new and to a resumed worktree alike: the first line tells which one it is. Replace the variables, print every line separately and the title exactly as it is, without quotes or escaping:
 
 > ✅ <first line>  
 > PR #<pr.number>: <pr.title>  
@@ -254,12 +265,7 @@ The first line is:
 - `<resumed>` is false → ``Worktree is ready for review: `review-pr-<pr.number>` ``
 - `<resumed>` is true → ``Reusing existing worktree for review: `review-pr-<pr.number>` ``
 
-If `<previous-head>` is set, add one more line directly below the first line:
-
-- `<previous-head>` equals `<pr.headRefOid>` → `Nothing new since the last review.`
-- `git merge-base --is-ancestor <previous-head> <pr.headRefOid>` exits 0 → `<commit-count> new commits since the last review.`, with `<commit-count>` from `git rev-list --count <previous-head>..<pr.headRefOid>`.
-- The same command exits 1 → `The PR was force-pushed: the previously reviewed commit is no longer part of it.`
-- Any other exit code → add no line.
+If the extra line exists, print it directly below the first line.
 
 ## Review (placeholder)
 
@@ -275,7 +281,7 @@ Non-zero exit → continue with Cleanup, without the listing. Otherwise print th
 
 Leaves the worktree. It runs last, and the review flow will be placed between the workspace and this section.
 
-Ask with `AskUserQuestion`: "Remove or keep the worktree `review-pr-<pr.number>`?" Options: Remove (Recommended), Keep.
+Ask with `AskUserQuestion`: "Remove or keep the worktree `review-pr-<pr.number>`?" Options: Remove (Recommended), Keep. Only the answer Remove removes the worktree; every other answer, including "Other" and a dismissed question, is Keep.
 
 **Keep** → call `ExitWorktree` with `keep`, then tell the user:
 
@@ -288,6 +294,6 @@ git status --porcelain
 git rev-parse HEAD
 ```
 
-Any output from `git status --porcelain`, or a printed commit other than `<pr.headRefOid>` → show what was found and ask whether to remove anyway or keep it. Otherwise call `ExitWorktree` with `remove` and `discard_changes: true`. The tool always refuses without that flag, because it counts the PR's own commits as work that exists only in the worktree. The PR commits stay on GitHub.
+Any output from `git status --porcelain`, a non-zero exit of either command (the state is unknown), or a printed commit other than `<pr.headRefOid>` → show what was found and ask whether to remove anyway or keep it; only the answer to remove anyway removes it, every other answer is Keep. Otherwise call `ExitWorktree` with `remove` and `discard_changes: true`. The tool always refuses without that flag, because it counts the PR's own commits as work that exists only in the worktree. The PR commits stay on GitHub.
 
 End the skill here, as it is still in development. Do not review the diff and print no verdict and no summary: the review flow does not exist yet, and the listing above is only a placeholder.
