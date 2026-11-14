@@ -86,10 +86,6 @@ One line per issue: `Closes #<number>`. No other link form counts (`Fixes`, `Res
 
 One unchecked task-list item per checklist row that matches the changed files: `- [ ] <item>`. GitHub renders them as checkboxes; `create-pr` never checks them and never reads their state back. The section is left out entirely when no row matches.
 
-## Deployment PRs
-
-The label `type: deployment` marks a deployment PR. `review-pr` skips it.
-
 ## Reading rules
 
 - Section and bucket headings match case-insensitively, with trailing whitespace, not indented.

@@ -179,9 +179,11 @@ The script writes the labels that may be chosen to `<pr-dir>/labels.json` and pr
 - `mode` is `taxonomy` → the printed labels are the ones with `type:` or `aspect:` prefix; use only those. Suppress all other labels (`priority:`, `status:`, community labels).
 - `mode` is `fallback` → no `type:`/`aspect:` labels exist; the printed labels are all repo labels. The enforcement rules below do not apply — suggest the most appropriate label from what is available, no minimum-selection required.
 
-**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (mapped with the table below); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If a linked issue already carries a `type:` label (from `<issue-context>`) that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent prefix signal, and surface it alongside the prefix-derived guess if the two disagree so the author can pick. If no clear signal, no `type:` label is inferred.
+**Inference:** From the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `type:` label. Conventional commit prefixes are the primary signal (mapped with the table below); changed files, diff content, and any linked issue reinforce or override when the prefix signal is weak or absent. If no clear signal, no `type:` label is inferred.
 
-From the branch context gathered in Step 1 (changed files, diff content), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `aspect:` label. Signal: changed files and diff content, weighed against the fetched label descriptions (Step 4) for topic/area match — e.g. changes concentrated in UI components/templates suggest `aspect: ui`, changes to CLI/API surface suggest `aspect: api`, changes to repo tooling/config suggest `aspect: repo`; a linked CodeQL alert's flagged file path reinforces this same matching (e.g. an alert flagging an auth file alongside a `security` aspect label). No inference is attempted from branch name — too context-dependent to guess reliably. If a linked issue already carries an `aspect:` label that exists in the fetched label list, treat it as a strong signal — prefer it over a weak/absent diff signal, and surface it alongside the diff-derived guess if the two disagree so the author can pick. If no clear signal, no `aspect:` label is inferred.
+From the branch context gathered in Step 1 (changed files, diff content), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `aspect:` label. Signal: changed files and diff content, weighed against the fetched label descriptions (Step 4) for topic/area match — e.g. changes concentrated in UI components/templates suggest `aspect: ui`, changes to CLI/API surface suggest `aspect: api`, changes to repo tooling/config suggest `aspect: repo`; a linked CodeQL alert's flagged file path reinforces this same matching (e.g. an alert flagging an auth file alongside a `security` aspect label). No inference is attempted from branch name — too context-dependent to guess reliably. If no clear signal, no `aspect:` label is inferred.
+
+A `type:` or `aspect:` label that a linked issue carries (from `<issue-context>`) and that exists in the label list is a strong signal: prefer it over a weak or absent signal from the commit prefix or the diff, and show it next to the derived guess when the two disagree, so the author can pick.
 
 If no `type:` label could be inferred, leave the slot empty rather than blocking.
 
@@ -247,7 +249,7 @@ When in doubt, classify up rather than down.
 
 #### Grouping
 
-Files that change together for one reason and share a risk level become one bullet, so real risk is not buried in a long list. Decide per PR from everything gathered above (diff, intent, issue, CodeQL alert, labels). Keep a group inside one directory or one set of siblings (same directory, same base name before the first dot); a file with a different risk than its group leaves it and gets its own bullet, and a Critical file or one raised by an open CodeQL alert is never grouped. Examples, not a complete list:
+Group files that change together, so real risk is not buried in a long list. `pr-body.md` defines what a group is and which files can never be in one; this section is only the judgment. Decide per PR from everything gathered above (diff, intent, issue, CodeQL alert, labels). Examples, not a complete list:
 
 - the `.ts`, `.spec.ts`, `.scss` and `.html` of one new component → one group, named as the component
 - a script, its tests and its fixtures → one group per kind
@@ -259,7 +261,7 @@ Within a subsection, two files can share the same bucket but not the same severi
 
 #### Format
 
-Build the draft as the File risk section of `pr-body.md` defines it: one subsection per risk level in the order given there, every entry (a file or a group) with a one-line annotation derived from the diff gathered in Step 1. Do not reword or reformat the headings or bullets.
+Build the draft as the File risk section of `pr-body.md` defines it: one subsection per risk level in the order given there, every entry (a file or a group) with a one-line annotation of up to 10 words, derived from the diff gathered in Step 1. Do not reword or reformat the headings or bullets.
 
 Store the derived sections as `<file-risk>`.
 

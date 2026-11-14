@@ -2045,6 +2045,17 @@ else
   report "skills: both skills define stop, skip and warning the same and use them" fail "vocabulary rows differ, an inline stop message or an old phrase is left"
 fi
 
+# every rule has one home: pr-body.md defines groups and the 10-word note, the skills point to it
+pr_body_md="$root/plugins/dotclaude-dev/references/pr-body.md"
+if grep -qF '`pr-body.md` defines what a group is and which files can never be in one' "$create_skill" && grep -qF 'up to 10 words' "$create_skill" &&
+  grep -qF 'never grouped' "$pr_body_md" && ! grep -qF 'never grouped' "$create_skill" && ! grep -qF '## Deployment PRs' "$pr_body_md" &&
+  [[ $(grep -cF 'A `type:` or `aspect:` label that a linked issue carries' "$create_skill") -eq 1 ]] &&
+  ! grep -qF 'already carries a' "$create_skill" && [[ $(grep -c 'no verdict' "$review_skill") -eq 1 ]]; then
+  report "skills: duplicated rules have one home and the other place points to it" ok
+else
+  report "skills: duplicated rules have one home and the other place points to it" fail "a pointer is missing or a rule is still written twice"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do

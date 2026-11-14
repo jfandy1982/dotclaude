@@ -290,7 +290,7 @@ Stands in for the review flow, which will replace this section. Run in the workt
 git diff --stat "<merge-base>" "<pr.headRefOid>"
 ```
 
-Non-zero exit → print "Warning: the changed files could not be listed." and continue with Cleanup. Otherwise print the output as its own message, below the heading "Changes of PR `<pr.number>` since `<pr.baseRefName>`:". This is a listing, not a review: add no findings and no verdict.
+Non-zero exit → print "Warning: the changed files could not be listed." and continue with Cleanup. Otherwise print the output as its own message, below the heading "Changes of PR `<pr.number>` since `<pr.baseRefName>`:". This is a listing, not a review: add no findings, no verdict and no summary. The review flow does not exist yet.
 
 ## Cleanup
 
@@ -311,4 +311,4 @@ git rev-parse HEAD
 
 Any output from `git status --porcelain`, a non-zero exit of either command (the state is unknown), or a printed commit other than `<pr.headRefOid>` → show what was found and ask whether to remove anyway or keep it; only the answer to remove anyway removes it, every other answer is Keep. Otherwise call `ExitWorktree` with `remove` and `discard_changes: true`. The tool always refuses without that flag, because it counts the PR's own commits as work that exists only in the worktree. The PR commits stay on GitHub.
 
-End the skill here, as it is still in development. Do not review the diff and print no verdict and no summary: the review flow does not exist yet, and the listing above is only a placeholder.
+End the skill here.
