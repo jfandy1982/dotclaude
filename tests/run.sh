@@ -1827,7 +1827,7 @@ EOT
 
 refs_script="$root/plugins/dotclaude-dev/scripts/pr-refs.sh"
 
-# make_refs_repos <dir>: builds <dir>/origin.git, <dir>/work and <dir>/user; sets REFS_A (the commit the PR was cut from) and REFS_F (the PR head)
+# make_refs_repos <dir>: builds <dir>/origin.git, <dir>/work and <dir>/user; sets REFS_A (the commit the PR was cut from), REFS_B (main's tip) and REFS_F (the PR head)
 make_refs_repos() {
   local dir=$1
   git init -q --bare "$dir/origin.git"
@@ -1851,6 +1851,7 @@ make_refs_repos() {
   echo b > "$dir/work/b.txt"
   git -C "$dir/work" add -A
   git -C "$dir/work" commit -q -m B
+  REFS_B=$(git -C "$dir/work" rev-parse HEAD)
   git -C "$dir/work" push -q origin main
   git clone -q "$dir/origin.git" "$dir/user"
   return 0
@@ -1896,6 +1897,11 @@ dir=$(refs_folder 7 "$REFS_A" main)
 jq '.headRefOid = "0123456789012345678901234567890123456789"' "$dir/pr.json" > "$dir/pr.new" && mv "$dir/pr.new" "$dir/pr.json"
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
 expect_error_text "pr-refs/the commit of pr.json is gone after a force-push" 1 other false "force-pushed"
+
+# a commit the clone has (main's tip) but that is not part of the PR head: an old head after a force-push looks the same
+dir=$(refs_folder 7 "$REFS_B" main)
+PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
+expect_error_text "pr-refs/a commit that exists locally but is not part of the PR head" 1 other false "force-pushed"
 
 dir=$(refs_folder 7 "$REFS_F" no-such-base)
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
