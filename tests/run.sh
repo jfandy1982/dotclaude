@@ -1199,6 +1199,134 @@ LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" file origin main base.txt
 expect_error "require_repo/branch-diff file: outside a repository" 1 other false
 expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "Not inside a git repository"
 
+# ---- branch-state.sh ----
+# The "remotes" are local bare repositories, so the script really fetches from them.
+
+bs_script="$root/plugins/dotclaude-dev/scripts/branch-state.sh"
+
+# make_bs_repo <dir>: <dir>/origin.git (bare) and <dir>/work, a clone on the branch feat that tracks origin/feat and is in sync
+make_bs_repo() {
+  local dir=$1
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/origin.git" symbolic-ref HEAD refs/heads/main
+  git init -q "$dir/work"
+  git -C "$dir/work" symbolic-ref HEAD refs/heads/main
+  git -C "$dir/work" config user.name tester
+  git -C "$dir/work" config user.email tester@example.com
+  git -C "$dir/work" remote add origin "$dir/origin.git"
+  echo a > "$dir/work/a.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m A
+  git -C "$dir/work" push -q origin main
+  git -C "$dir/work" checkout -q -b feat
+  echo f > "$dir/work/f.txt"
+  git -C "$dir/work" add -A
+  git -C "$dir/work" commit -q -m F
+  git -C "$dir/work" push -q -u origin feat
+  return 0
+}
+
+# bs_commit <repo> <file>: one more commit
+bs_commit() {
+  echo "$2" > "$1/$2"
+  git -C "$1" add -A
+  git -C "$1" commit -q -m "$2"
+  return 0
+}
+
+bs_root=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_root"
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_jq "branch-state/in sync: branch, remote and remote branch" '. == {branch: "feat", remote: "origin", remoteBranch: "feat"}'
+
+git -C "$bs_root/work" checkout -q --detach
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script" create-pr
+git -C "$bs_root/work" checkout -q feat
+expect_error "branch-state/detached HEAD" 1 other false
+expect_error_message "branch-state/detached HEAD, message" "Not on a branch"
+expect_error_message "branch-state/detached HEAD, the hint names the skill" '`/create-pr`'
+
+git -C "$bs_root/work" checkout -q -b loose
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_error "branch-state/no upstream" 1 other false
+expect_error_message "branch-state/no upstream, message" "has no remote tracking branch"
+expect_error_message "branch-state/no upstream, the push command names the branch" "git push -u origin loose"
+
+# the upstream is a local branch: the old text took its name for a remote and said "check your network"
+git -C "$bs_root/work" checkout -q -b follows-main --track main
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_error "branch-state/the upstream is a local branch" 1 other false
+expect_error_message "branch-state/the upstream is a local branch, message" "local branch"
+git -C "$bs_root/work" checkout -q feat
+
+# local and remote branch names differ
+git -C "$bs_root/work" checkout -q -b fix-x
+bs_commit "$bs_root/work" x
+git -C "$bs_root/work" push -q -u origin fix-x:fix/x-new
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_jq "branch-state/different local and remote branch names" '. == {branch: "fix-x", remote: "origin", remoteBranch: "fix/x-new"}'
+git -C "$bs_root/work" checkout -q feat
+
+# a branch name with a dot and a slash, and a remote name with a slash
+git -C "$bs_root/work" checkout -q -b topic/a.b
+bs_commit "$bs_root/work" ab
+git init -q --bare "$bs_root/fork.git"
+git -C "$bs_root/work" remote add my/fork "$bs_root/fork.git"
+git -C "$bs_root/work" push -q -u my/fork topic/a.b
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_jq "branch-state/a remote name with a slash and a branch name with a dot" '. == {branch: "topic/a.b", remote: "my/fork", remoteBranch: "topic/a.b"}'
+git -C "$bs_root/work" checkout -q feat
+
+# behind, ahead and both: the stop names the upstream and the hint the skill
+bs_behind=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_behind"
+git clone -q "$bs_behind/origin.git" "$bs_behind/other"
+git -C "$bs_behind/other" config user.name tester
+git -C "$bs_behind/other" config user.email tester@example.com
+git -C "$bs_behind/other" checkout -q feat
+bs_commit "$bs_behind/other" more
+git -C "$bs_behind/other" push -q origin feat
+PLAIN_DIR="$bs_behind/work" run_plain "$bs_script" create-pr
+expect_error "branch-state/behind the remote" 1 other false
+expect_error_message "branch-state/behind the remote, message" "behind origin/feat"
+expect_error_message "branch-state/behind the remote, hint" 'then re-run `/create-pr`.'
+
+bs_commit "$bs_behind/work" mine
+PLAIN_DIR="$bs_behind/work" run_plain "$bs_script"
+expect_error "branch-state/both behind and ahead" 1 other false
+expect_error_message "branch-state/both behind and ahead says behind first" "behind origin/feat"
+
+bs_ahead=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_ahead"
+bs_commit "$bs_ahead/work" mine
+PLAIN_DIR="$bs_ahead/work" run_plain "$bs_script"
+expect_error "branch-state/ahead of the remote" 1 other false
+expect_error_message "branch-state/ahead of the remote, message" "not on origin/feat yet"
+
+# the remote is configured but its repository cannot be fetched
+bs_broken=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_broken"
+git -C "$bs_broken/work" config remote.origin.url "$bs_broken/no-such-repo.git"
+PLAIN_DIR="$bs_broken/work" run_plain "$bs_script"
+expect_error "branch-state/the fetch fails" 1 other false
+expect_error_message "branch-state/the fetch fails, message" "Could not fetch origin"
+
+# the branch config names a remote that does not exist
+bs_gone=$(mktemp -d "$tmp/bs-XXXXXX")
+make_bs_repo "$bs_gone"
+git -C "$bs_gone/work" config branch.feat.remote gone
+PLAIN_DIR="$bs_gone/work" run_plain "$bs_script"
+expect_error "branch-state/the configured remote does not exist" 1 other false
+expect_error_message "branch-state/the configured remote does not exist, message" "No remote named gone"
+
+PLAIN_DIR="$rg_bare" run_plain "$bs_script"
+expect_error "branch-state/outside a repository" 1 other false
+expect_error_message "branch-state/outside a repository, the contract wording" "Not inside a git repository"
+run_plain "$bs_script" a b
+expect_error "branch-state/usage: two arguments" 2 usage false
+run_plain "$bs_script" other-skill
+expect_error "branch-state/usage: an unknown skill" 2 usage false
+
 # ---- preflight.sh ----
 
 preflight_script="$root/plugins/dotclaude-dev/scripts/preflight.sh"
