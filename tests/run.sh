@@ -619,12 +619,24 @@ run_stub "$stub" "$create_script" labels "$work"
 jq -c '{mode: "fallback", labels: .}' "$stub/label-list.out" > "$tmp/create-expected.json"
 check "labels/fallback mode without type: or aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
 
+# list-open-prs: the head is the branch name on the remote (preflight.json), PRs from forks with the same head name do not count
 stub=$(new_stub)
 printf '%s\n' '[]' > "$stub/pr-list.out"
 work=$(new_work)
-run_stub "$stub" "$create_script" list-open-prs "$work" feat/x
+jq '. + {remoteBranch: "fix/x-new"}' "$work/preflight.json" > "$work/preflight.new" && mv "$work/preflight.new" "$work/preflight.json"
+run_stub "$stub" "$create_script" list-open-prs "$work"
 expect_text "list-open-prs/none" "$tmp/data.out" "[]"
-expect_call "list-open-prs/asks for the branch and open PRs" "$stub" "pr list --repo $repo_url --head feat/x --state open"
+expect_call "list-open-prs/asks for the remote branch and open PRs" "$stub" "pr list --repo $repo_url --head fix/x-new --state open"
+
+stub=$(new_stub)
+printf '%s\n' '[{"number":5,"title":"mine","url":"https://github.example.local/o/r/pull/5","isCrossRepository":false},{"number":6,"title":"from a fork","url":"https://github.example.local/o/r/pull/6","isCrossRepository":true}]' > "$stub/pr-list.out"
+run_stub "$stub" "$create_script" list-open-prs "$work"
+expect_text "list-open-prs/a PR from a fork with the same head name is ignored, url is kept" "$tmp/data.out" '[{"number":5,"title":"mine","url":"https://github.example.local/o/r/pull/5"}]'
+
+work=$(new_work)
+run_stub "$stub" "$create_script" list-open-prs "$work"
+expect_error "list-open-prs/preflight.json without remoteBranch" 1 other false
+expect_error_message "list-open-prs/preflight.json without remoteBranch, message" "preflight.sh create-pr"
 
 # create: title and body come from files and reach gh unchanged
 title='fix: quote `$TMPDIR` in "paths" $(echo x)'
@@ -705,7 +717,7 @@ EOT
 work=$(mktemp -d "$tmp/work-XXXXXX")
 printf '%s\n' 'a title' > "$work/title.txt"
 printf '%s\n' 'body text' > "$work/body.txt"
-for sub in "labels $work" "list-open-prs $work feat/x" "create $work no"; do
+for sub in "labels $work" "list-open-prs $work" "create $work no"; do
   run_stub "$stub" "$create_script" $sub
   expect_error "preflight.json/pr-create ${sub%% *} needs the file" 1 other false
   expect_error_message "preflight.json/pr-create ${sub%% *} says what to do" "Run preflight first"

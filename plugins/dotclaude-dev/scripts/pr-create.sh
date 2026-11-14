@@ -5,8 +5,10 @@
 #       gh label list (limit 50: the target repos have about 25 labels, raise it if a repo exceeds 50);
 #       writes <pr-dir>/labels.json (all labels), prints {mode, labels}:
 #       "taxonomy" with the labels prefixed type: or aspect:, or "fallback" with all labels when there are none
-#   pr-create.sh list-open-prs <pr-dir> <branch>
-#       prints the open PRs with that head branch: [{number, title, url}]
+#   pr-create.sh list-open-prs <pr-dir>
+#       prints the open PRs of this repository whose head is the branch name on the remote (remoteBranch of
+#       <pr-dir>/preflight.json, written by preflight.sh create-pr): [{number, title, url}]. A PR from a fork that
+#       happens to use the same head name does not count.
 #   pr-create.sh create <pr-dir> <yes|no> [<label>...]
 #       reads <pr-dir>/title.txt and <pr-dir>/body.txt, runs gh pr create (yes = draft), prints the PR URL
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
@@ -31,10 +33,14 @@ cmd_labels() {
 }
 
 cmd_list_open_prs() {
-  local dir=$1 branch=$2
+  local dir=$1 branch
   load_preflight "$dir"
-  run_gh "open PRs of branch $branch" pr list --repo "$REPO_URL" --head "$branch" --state open --json number,title,url
-  printf '%s' "$OUT" | jq -c '.' || die "open PRs of branch $branch" "Cannot read the PR list returned by gh."
+  branch=$(jq -r '.remoteBranch // empty' "$dir/preflight.json" 2> /dev/null)
+  [[ -n $branch ]] || die "preflight.json" "$dir/preflight.json names no remote branch. Run preflight.sh create-pr first."
+  # shortcut: gh pr list --json isCrossRepository (as in gh pr view) is assumed, not run against a real gh; drop the filter if gh refuses the field
+  run_gh "open PRs of branch $branch" pr list --repo "$REPO_URL" --head "$branch" --state open --json number,title,url,isCrossRepository
+  printf '%s' "$OUT" | jq -c '[.[] | select(.isCrossRepository | not) | {number, title, url}]' ||
+    die "open PRs of branch $branch" "Cannot read the PR list returned by gh."
   return 0
 }
 
@@ -64,7 +70,7 @@ main() {
   [[ $# -gt 0 ]] && shift
   case $cmd in
     labels) [[ $# -eq 1 ]] || usage; cmd_labels "$@" ;;
-    list-open-prs) [[ $# -eq 2 ]] || usage; cmd_list_open_prs "$@" ;;
+    list-open-prs) [[ $# -eq 1 ]] || usage; cmd_list_open_prs "$@" ;;
     create) [[ $# -ge 2 ]] || usage; cmd_create "$@" ;;
     *) usage ;;
   esac
