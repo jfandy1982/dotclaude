@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Checks dotclaude's plugin, CLI tool, and environment-variable prerequisites; offers to fix plugin gaps.
+description: Use when setting up or troubleshooting the dotclaude-dev plugin. Checks that the prerequisite plugins, the CLI tools git, gh and jq and the environment variables are in place, and offers to install missing plugins. Run it by hand; nothing changes without confirmation.
 disable-model-invocation: true
 ---
 

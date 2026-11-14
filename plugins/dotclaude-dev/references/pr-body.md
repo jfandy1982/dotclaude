@@ -72,7 +72,7 @@ Each file, or each group of files, is one bullet:
 
 The separator is an em dash. The path keeps its case. The summary has up to 10 words, not counting a group's file count, and describes what changed according to the diff; for a generated file or a pure rename it comes from the numbers, the old path and the other changed files.
 
-A group is files that change together for one reason and share a risk level, inside one directory or one set of siblings (same directory, same base name before the first dot). Its path is a directory (`tests/fixtures/worktree/`) or a brace pattern (`src/app/foo/foo.component.{ts,spec.ts,scss,html}`), and its summary ends with the file count, e.g. `(4 files)`. All members of a group share one bucket; a file with a different risk is its own bullet, and a Critical file or one raised by an open CodeQL alert is never grouped.
+A group is files that change together for one reason and share a risk level, inside one directory or one set of siblings (same directory, same base name before the first dot). Its path is a directory (`tests/fixtures/worktree/`; it covers everything below it, subdirectories included) or a brace pattern (`src/app/foo/foo.component.{ts,spec.ts,scss,html}`), and its summary ends with the file count, e.g. `(4 files)`. All members of a group share one bucket; a file with a different risk is its own bullet, and a Critical file or one raised by an open CodeQL alert is never grouped.
 
 ## Merge danger
 
@@ -85,10 +85,6 @@ One line per issue: `Closes #<number>`. No other link form counts (`Fixes`, `Res
 ## PR checklist
 
 One unchecked task-list item per checklist row that matches the changed files: `- [ ] <item>`. GitHub renders them as checkboxes; `create-pr` never checks them and never reads their state back. The section is left out entirely when no row matches.
-
-## Deployment PRs
-
-The label `type: deployment` marks a deployment PR. `review-pr` skips it.
 
 ## Reading rules
 
