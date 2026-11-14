@@ -1631,6 +1631,13 @@ else
   report "skills/review-pr script calls use the short signatures" fail "a pr-data.sh call does not match the short signature"
 fi
 
+# the base branch name comes from the PR: the skill never puts it into a command, pr-refs.sh reads it from pr.json
+if grep -qF 'scripts/pr-refs.sh" <pr-dir>' "$review_skill" && ! grep -qE '^git (fetch origin|merge-base <pr\.headRefOid>)|^git .*<pr\.baseRefName>' "$review_skill"; then
+  report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" ok
+else
+  report "skills/review-pr Step 1 uses pr-refs.sh and no base branch name in a command" fail "script call missing or a raw git fetch/merge-base or the base branch placeholder is left"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do

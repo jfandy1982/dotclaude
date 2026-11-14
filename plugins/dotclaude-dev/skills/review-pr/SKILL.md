@@ -44,7 +44,7 @@ Fetch the PR in one call. The script writes `pr.json` and `body.txt` and prints 
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" pr <pr-arg> <pr-dir>
 ```
 
-`pr.json` keeps every fetched field and adds the base commit `baseRefOid` and the computed checks `sameRepo` and `isDeployment`, so later steps read them instead of judging the raw values. `headRefOid` and `baseRefOid` are the commits the review is based on. The body gets its own file, because the body parser reads text, not JSON.
+`pr.json` keeps every fetched field and adds the base commit `baseRefOid` and the computed checks `sameRepo` and `isDeployment`, so later steps read them instead of judging the raw values. `headRefOid` is the commit the review is based on; `baseRefOid` is only kept for reference, the merge base comes from the base branch as it is when the workspace is prepared. The body gets its own file, because the body parser reads text, not JSON.
 
 Non-zero exit → stop, as described in Precondition 2.
 
@@ -175,47 +175,21 @@ Store the final list as `<scopes>`.
 
 Checks out the PR head in a separate worktree, so the reviewers can read the whole repository. The user's own working tree stays untouched. This skill explicitly instructs the use of the `EnterWorktree` and `ExitWorktree` tools.
 
-**Step 1 — Fetch the PR head**
+**Step 1 — Fetch the PR head and find the merge base**
+
+One script fetches the head of the PR, checks that `<pr.headRefOid>` is part of it, fetches the base branch and prints the merge base. It reads the PR number, the commit and the base branch from `<pr-dir>/pr.json` itself, so no text from the PR is put into a command here:
 
 ```bash
-git fetch origin pull/<pr.number>/head
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-refs.sh" <pr-dir>
 ```
 
-Non-zero exit → stop:
+Non-zero exit → stop, as described in Precondition 2. A PR that was force-pushed since Precondition 3 ends here too.
 
-> "Could not fetch the head of PR `<pr.number>` from `origin`."
+The review runs on `<pr.headRefOid>`, the commit `<pr>` describes, even if the PR got new commits since Precondition 3. The merge base is taken against the base branch as it is now, which is what GitHub shows for the PR.
 
-The review runs on `<pr.headRefOid>`, the commit `<pr>` describes, even if the PR got new commits since Precondition 3. That commit only has to exist locally:
+Store `mergeBase` from the printed JSON as `<merge-base>`.
 
-```bash
-git cat-file -t <pr.headRefOid> 2>/dev/null
-```
-
-Output other than exactly `commit` → the PR was force-pushed after Precondition 3 → stop:
-
-> "PR `<pr.number>` was force-pushed while review-pr was starting. Re-run `/review-pr`."
-
-**Step 2 — Find the merge base**
-
-```bash
-git fetch origin +refs/heads/<pr.baseRefName>:refs/remotes/origin/<pr.baseRefName>
-```
-
-Non-zero exit → stop:
-
-> "Could not fetch base branch `<pr.baseRefName>` of PR `<pr.number>` from `origin`."
-
-```bash
-git merge-base <pr.headRefOid> refs/remotes/origin/<pr.baseRefName>
-```
-
-Non-zero exit → stop:
-
-> "Could not determine the merge base of PR `<pr.number>` with `<pr.baseRefName>`."
-
-Store the printed commit as `<merge-base>`.
-
-**Step 3 — Enter the worktree**
+**Step 2 — Enter the worktree**
 
 First check whether this PR already has a worktree. The program looks for the worktree `review-pr-<pr.number>` in the worktree list:
 
@@ -230,16 +204,16 @@ Non-zero exit → stop:
 Read the printed JSON:
 
 - `prune` is true → the worktree is registered but its folder is gone. Run `git worktree prune`; `<resumed>` is false.
-- `resumed` is true → store `<resumed>` as true. Store `previousHead` as `<previous-head>`, unless it is `null`: that means an earlier run stopped before Step 4 checked out the PR, so there is no previous review.
+- `resumed` is true → store `<resumed>` as true. Store `previousHead` as `<previous-head>`, unless it is `null`: that means an earlier run stopped before Step 3 checked out the PR, so there is no previous review.
 - Otherwise `<resumed>` is false.
 
 Call `EnterWorktree` with the name `review-pr-<pr.number>`. The tool resumes an existing worktree of that name, so a new and a resumed worktree use the same call. The tool fails → stop:
 
 > "Could not enter the worktree `review-pr-<pr.number>`. If you are already in a worktree session, exit it first, then re-run `/review-pr`."
 
-From here on the session works inside the worktree. Every stop in Step 4 calls `ExitWorktree` first, so the session never stays in a half-prepared worktree.
+From here on the session works inside the worktree. Every stop in Step 3 calls `ExitWorktree` first, so the session never stays in a half-prepared worktree.
 
-**Step 4 — Check out the PR head and confirm**
+**Step 3 — Check out the PR head and confirm**
 
 If `<resumed>` is true, the worktree must be clean first:
 
