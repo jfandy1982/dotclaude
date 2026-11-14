@@ -600,6 +600,17 @@ printf '%s\n' '{"base":{}}' > "$stub/api-pulls.out"
 run_data "$stub" pr 7 PR_DIR
 expect_error_empty "pr/an answer without a base commit" 1 other false "$PR_DIR"
 
+# a PR URL on another host than origin: no base commit call (it would ask the wrong host), baseRefOid is null, sameRepo false
+stub=$(new_stub)
+jq '.url = "https://other.example.org/x/y/pull/7"' "$fixtures/gh/pr-base.json" > "$stub/pr-view.out"
+run_data "$stub" pr 7 PR_DIR
+expect_no_call "pr/another host: no base commit call" "$stub" "api"
+if jq -e '.baseRefOid == null and .sameRepo == false' "$PR_DIR/pr.json" > /dev/null 2>&1; then
+  report "pr/another host: baseRefOid null, sameRepo false" ok
+else
+  report "pr/another host: baseRefOid null, sameRepo false" fail "$(cat "$PR_DIR/pr.json" 2> /dev/null)"
+fi
+
 stub=$(new_stub)
 fail_stub "$stub" api-pulls 1 "error connecting to github.example.local"
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
@@ -754,18 +765,61 @@ printf '%s\n' 'https://github.example.local/o/r/pull/9' > "$stub/pr-create.out"
 work=$(new_work)
 printf '%s\n' "$title" > "$work/title.txt"
 printf '%s\n' 'body text' > "$work/body.txt"
-run_stub "$stub" "$create_script" create "$work" no "type: bug" "aspect: ui"
+printf '%s\n' '[{"name":"type: bug"},{"name":"aspect: ui"},{"name":"we$(ird) `name`"}]' > "$work/labels.json"
+printf '%s\n' 'type: bug' 'aspect: ui' > "$work/labels.txt"
+run_stub "$stub" "$create_script" create "$work" no
 expect_text "create/stdout is only the URL" "$tmp/data.out" "https://github.example.local/o/r/pull/9"
 expect_call "create/repository, assignee, title and body file" "$stub" "pr create --repo $repo_url --assignee @me --title $title --body-file $work/body.txt"
 expect_call "create/several labels" "$stub" "--label type: bug --label aspect: ui"
 expect_no_call "create/no draft flag for no" "$stub" "--draft"
 
 stub=$(new_stub)
-run_stub "$stub" "$create_script" create "$work" yes "type: bug"
+printf '%s\n' 'type: bug' > "$work/labels.txt"
+run_stub "$stub" "$create_script" create "$work" yes
 expect_call "create/draft with one label" "$stub" "--body-file $work/body.txt --draft --label type: bug"
+# a label name with shell characters reaches gh as one argument and runs nothing
 stub=$(new_stub)
+printf '%s\n' 'we$(ird) `name`' > "$work/labels.txt"
 run_stub "$stub" "$create_script" create "$work" no
-expect_no_call "create/no label flag without labels" "$stub" "--label"
+expect_call "create/a label name with shell characters is one argument" "$stub" '--label we$(ird) `name`'
+# a name that labels.json lacks stops the run before gh is called
+stub=$(new_stub)
+printf '%s\n' 'type: bug' 'no-such-label' > "$work/labels.txt"
+run_stub "$stub" "$create_script" create "$work" no
+expect_error_text "create/an unknown label stops the run" 1 other false 'no-such-label'
+expect_no_call "create/an unknown label makes no gh call" "$stub" "pr create"
+stub=$(new_stub)
+: > "$work/labels.txt"
+run_stub "$stub" "$create_script" create "$work" no
+expect_no_call "create/no label flag with an empty labels.txt" "$stub" "--label"
+stub=$(new_stub)
+rm "$work/labels.txt"
+run_stub "$stub" "$create_script" create "$work" no
+expect_no_call "create/no label flag without labels.txt" "$stub" "--label"
+
+# check-labels: the unknown names, never in a command (own folder, the one above is still used by the tests below)
+cl_work=$(new_work)
+cp "$work/labels.json" "$cl_work/labels.json"
+work_main=$work
+work=$cl_work
+printf '%s\n' 'type: bug' '' 'no-such-label' 'we$(ird) `name`' 'other' > "$work/labels.txt"
+run_plain "$create_script" check-labels "$work"
+expect_jq "check-labels/lists the names that labels.json lacks, empty lines ignored" '. == {unknown: ["no-such-label", "other"]}'
+: > "$work/labels.txt"
+run_plain "$create_script" check-labels "$work"
+expect_jq "check-labels/an empty file has no unknown names" '. == {unknown: []}'
+rm "$work/labels.txt"
+run_plain "$create_script" check-labels "$work"
+expect_error_text "check-labels/no labels.txt" 1 other false "no labels.txt"
+printf '%s\n' 'type: bug' > "$work/labels.txt"
+rm "$work/labels.json"
+run_plain "$create_script" check-labels "$work"
+expect_error_text "check-labels/no labels.json" 1 other false "pr-create.sh labels first"
+run_plain "$create_script" check-labels
+expect_error "check-labels/usage: no folder" 2 usage false
+run_plain "$create_script" create "$work" no "type: bug"
+expect_error "create/usage: labels are no arguments any more" 2 usage false
+work=$work_main
 
 stub=$(new_stub)
 fail_stub "$stub" pr-create 1 "error connecting to github.example.local"
@@ -787,7 +841,9 @@ done
 # a missing label is not a wrong PR number
 stub=$(new_stub)
 fail_stub "$stub" pr-create 1 "could not add label: 'nope' not found"
-run_stub "$stub" "$create_script" create "$work" no "nope"
+printf '%s\n' 'nope' > "$work/labels.txt"
+printf '%s\n' '[{"name":"nope"}]' > "$work/labels.json"
+run_stub "$stub" "$create_script" create "$work" no
 expect_error_text "create/label does not exist" 11 not_found false "Check the labels"
 
 stub=$(new_stub)
@@ -1741,6 +1797,19 @@ PF_REPO=$(pf_branch_repo feat main) pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error_text "preflight/create-pr: the upstream is the default branch" 1 other false "tracks the default branch main"
 expect_error_text "preflight/create-pr: the upstream is the default branch, hint pushes the branch" 1 other false "git push -u origin feat"
 expect_no_pr_folder "preflight/create-pr: the upstream is the default branch makes no folder" "$pf_case_tmp"
+
+# names that the skill puts into commands: a shell character in the branch or the default branch stops the run, no folder
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo 'feat$(id)') pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error_text "preflight/create-pr: a branch name with shell characters" 1 other false "has characters this plugin does not support"
+expect_no_pr_folder "preflight/create-pr: a branch name with shell characters makes no folder" "$pf_case_tmp"
+stub=$(pf_stub)
+echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":{"name":"ma`in"}}' > "$stub/repo-view.out"
+PF_REPO=$(pf_branch_repo feat) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error_text "preflight/create-pr: a default branch name with shell characters" 1 other false "has characters this plugin does not support"
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo 'topic/a.b+c@d_e-f') pf_run "$stub" "$pf_case_tmp" create-pr
+expect_jq "preflight/create-pr: the usual branch name characters pass" '.branch == "topic/a.b+c@d_e-f"'
 
 # a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
 pf_cred_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
