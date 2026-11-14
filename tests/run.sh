@@ -2076,6 +2076,21 @@ else
   report "skills/doctor: unknown list, scope rule, login check, honest intro, one self sentence" fail "a rule sentence is missing or an old phrase is left"
 fi
 
+# the plugin README is the one home of the operational facts and lists every skill
+plugin_readme="$root/plugins/dotclaude-dev/README.md"
+readme_ok=yes
+for needed in '## Skills' '## How the skills run' '### Temporary files' '## Prerequisites' '### Tool versions' '## Known limitations' 'disable-model-invocation: true' 'The scripts never delete anything' '`doctor`' '`create-pr`' '`review-pr`'; do
+  grep -qF -- "$needed" "$plugin_readme" || { readme_ok=no; readme_missing=$needed; }
+done
+for skill_dir in "$root"/plugins/dotclaude-dev/skills/*/; do
+  grep -qF "\`$(basename "$skill_dir")\`" "$plugin_readme" || { readme_ok=no; readme_missing="skill $(basename "$skill_dir")"; }
+done
+if [[ -f $plugin_readme && $readme_ok == yes ]]; then
+  report "plugin README: sections for skills, running, temp files, prerequisites, versions, limitations" ok
+else
+  report "plugin README: sections for skills, running, temp files, prerequisites, versions, limitations" fail "missing: ${readme_missing:-the file}"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
