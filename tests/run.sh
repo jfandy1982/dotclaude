@@ -206,6 +206,35 @@ expect_error_message() {
   return 0
 }
 
+# expect_error_text <name> <exit-code> <error> <retryable> <text>: expect_error and expect_error_message in one test
+expect_error_text() {
+  local name=$1 want=$2 error=$3 retryable=$4 text=$5 lines
+  lines=$(wc -l < "$tmp/data.err" | tr -d ' ')
+  if [[ $DATA_CODE -eq $want && ! -s "$tmp/data.out" && $lines -eq 1 ]] &&
+    jq -e --arg e "$error" --argjson x "$want" --argjson r "$retryable" --arg t "$text" \
+      '.error == $e and .exit == $x and .retryable == $r and (.message | contains($t))' "$tmp/data.err" > /dev/null; then
+    report "$name" ok
+  else
+    report "$name" fail "exit $DATA_CODE (want $want), message part (want: $text); stdout: $(cat "$tmp/data.out"); stderr: $(cat "$tmp/data.err")"
+  fi
+  return 0
+}
+
+# expect_error_empty <name> <exit-code> <error> <retryable> <dir>: expect_error and expect_empty in one test
+expect_error_empty() {
+  local name=$1 want=$2 error=$3 retryable=$4 dir=$5 lines left
+  lines=$(wc -l < "$tmp/data.err" | tr -d ' ')
+  left=$(ls -A "$dir" | grep -v '^preflight\.json$' || true)
+  if [[ $DATA_CODE -eq $want && ! -s "$tmp/data.out" && $lines -eq 1 && -z $left ]] &&
+    jq -e --arg e "$error" --argjson x "$want" --argjson r "$retryable" \
+      '.error == $e and .exit == $x and .retryable == $r and (.message | length > 0)' "$tmp/data.err" > /dev/null; then
+    report "$name" ok
+  else
+    report "$name" fail "exit $DATA_CODE (want $want); files left: $left; stdout: $(cat "$tmp/data.out"); stderr: $(cat "$tmp/data.err")"
+  fi
+  return 0
+}
+
 # pr_variant <name> <jq-edit-of-the-base-pr> <jq-check-on-pr.json>
 pr_variant() {
   local name=$1 edit=$2 expr=$3 stub
@@ -362,27 +391,23 @@ fi
 stub=$(new_stub)
 fail_stub "$stub" api-alerts 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
 run_data "$stub" alert 9 PR_DIR
-expect_error "alert/not found" 11 not_found false
-expect_empty "alert/not found writes no file" "$PR_DIR"
+expect_error_empty "alert/not found" 11 not_found false "$PR_DIR"
 
 stub=$(new_stub)
 fail_stub "$stub" api-alerts 1 "Advanced Security must be enabled for this repository to use code scanning. (HTTP 403)" '{"message":"Advanced Security must be enabled"}'
 run_data "$stub" alert 3 PR_DIR
-expect_error "alert/code scanning not enabled is not_found, no body on stdout" 11 not_found false
-expect_empty "alert/code scanning not enabled writes no file" "$PR_DIR"
+expect_error_empty "alert/code scanning not enabled is not_found, no body on stdout" 11 not_found false "$PR_DIR"
 
 stub=$(new_stub)
 printf '%s\n' 'not json' > "$stub/api-alerts.out"
 run_data "$stub" alert 3 PR_DIR
-expect_error "alert/unreadable response" 1 other false
-expect_empty "alert/unreadable response writes no file" "$PR_DIR"
+expect_error_empty "alert/unreadable response" 1 other false "$PR_DIR"
 
 for body in 'null' '{"most_recent_instance":null}' '{"number":"x"}' ''; do
   stub=$(new_stub)
   printf '%s' "$body" > "$stub/api-alerts.out"
   run_data "$stub" alert 3 PR_DIR
-  expect_error "alert/a response that is not an alert is an error: ${body:-empty}" 1 other false
-  expect_empty "alert/a response that is not an alert writes no file: ${body:-empty}" "$PR_DIR"
+  expect_error_empty "alert/a response that is not an alert is an error: ${body:-empty}" 1 other false "$PR_DIR"
 done
 
 run_data "$stub" alert abc PR_DIR
@@ -458,8 +483,7 @@ while IFS='|' read -r label gh_exit stderr_text want_exit error retryable; do
   stub=$(new_stub)
   fail_stub "$stub" pr-view "$gh_exit" "$stderr_text" '{"message":"error body"}'
   run_data "$stub" pr 7 PR_DIR
-  expect_error "contract/$label" "$want_exit" "$error" "$retryable"
-  expect_empty "contract/$label leaves no file" "$PR_DIR"
+  expect_error_empty "contract/$label" "$want_exit" "$error" "$retryable" "$PR_DIR"
 done << 'EOF'
 auth by gh exit code 4|4|authentication required|10|auth|false
 auth by HTTP 401|1|gh: Bad credentials (HTTP 401)|10|auth|false
@@ -493,8 +517,7 @@ stub=$(new_stub)
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
 fail_stub "$stub" api-pulls 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"}'
 run_data "$stub" pr 7 PR_DIR
-expect_error "pr/base commit call fails" 11 not_found false
-expect_empty "pr/base commit call fails leaves no file" "$PR_DIR"
+expect_error_empty "pr/base commit call fails" 11 not_found false "$PR_DIR"
 
 stub=$(new_stub)
 fail_stub "$stub" api-pulls 1 "error connecting to github.example.local"
@@ -639,8 +662,7 @@ expect_text "list-open-prs/a PR from a fork with the same head name is ignored, 
 
 work=$(new_work)
 run_stub "$stub" "$create_script" list-open-prs "$work"
-expect_error "list-open-prs/preflight.json without remoteBranch" 1 other false
-expect_error_message "list-open-prs/preflight.json without remoteBranch, message" "preflight.sh create-pr"
+expect_error_text "list-open-prs/preflight.json without remoteBranch" 1 other false "preflight.sh create-pr"
 
 # create: title and body come from files and reach gh unchanged
 title='fix: quote `$TMPDIR` in "paths" $(echo x)'
@@ -683,8 +705,7 @@ done
 stub=$(new_stub)
 fail_stub "$stub" pr-create 1 "could not add label: 'nope' not found"
 run_stub "$stub" "$create_script" create "$work" no "nope"
-expect_error "create/label does not exist" 11 not_found false
-expect_error_message "create/label does not exist, message names the labels" "Check the labels"
+expect_error_text "create/label does not exist" 11 not_found false "Check the labels"
 
 stub=$(new_stub)
 work=$(new_work)
@@ -710,8 +731,7 @@ expect_error "usage/pr-create repo is gone, preflight.sh reads the repository" 2
 stub=$(new_stub)
 while IFS= read -r args; do
   NO_PREFLIGHT=1 run_data "$stub" $args
-  expect_error "preflight.json/pr-data $args needs the file" 1 other false
-  expect_error_message "preflight.json/pr-data $args says what to do" "Run preflight first"
+  expect_error_text "preflight.json/pr-data $args needs the file" 1 other false "Run preflight first"
 done << 'EOT'
 pr 7 PR_DIR
 issue 7 PR_DIR
@@ -723,8 +743,7 @@ printf '%s\n' 'a title' > "$work/title.txt"
 printf '%s\n' 'body text' > "$work/body.txt"
 for sub in "labels $work" "list-open-prs $work" "create $work no"; do
   run_stub "$stub" "$create_script" $sub
-  expect_error "preflight.json/pr-create ${sub%% *} needs the file" 1 other false
-  expect_error_message "preflight.json/pr-create ${sub%% *} says what to do" "Run preflight first"
+  expect_error_text "preflight.json/pr-create ${sub%% *} needs the file" 1 other false "Run preflight first"
 done
 [[ ! -e $stub/calls.log ]] &&
   report "preflight.json/no gh call without the file" ok ||
@@ -810,8 +829,7 @@ check "branch-diff/files: file-table.json holds the printed table" "$bd_dir/file
 
 # one call per folder: a second call must not mix its files with the first run's
 PLAIN_DIR="$bd_repo" run_plain "$diff_script" files origin main "$bd_dir"
-expect_error "branch-diff/files: a second call in the same folder is refused" 1 other false
-expect_error_message "branch-diff/files: the refusal says the folder has diff/ already" "already has diff/"
+expect_error_text "branch-diff/files: a second call in the same folder is refused" 1 other false "already has diff/"
 expect_in_file "branch-diff/files: the refusal leaves the first run's diff file alone" "$bd_dir/diff/001.diff" "+two"
 
 bd_dir=$(mktemp -d "$tmp/folder-XXXXXX")
@@ -1314,22 +1332,17 @@ make_lone_repo "$rg_lone"
 rg_dir=$(mktemp -d "$tmp/folder-XXXXXX")
 # git's messages are translated: LC_ALL=C makes the text comparable
 LC_ALL=C PLAIN_DIR="$rg_lone" run_plain "$checklist_script" origin main
-expect_error "run_git/pr-checklist: no merge base is one error line" 1 other false
-expect_error_message "run_git/pr-checklist: the message carries git's reason" "no merge base"
+expect_error_text "run_git/pr-checklist: no merge base is one error line" 1 other false "no merge base"
 LC_ALL=C PLAIN_DIR="$rg_lone" run_plain "$diff_script" files origin main "$rg_dir"
-expect_error "run_git/branch-diff files: no merge base is one error line" 1 other false
-expect_error_message "run_git/branch-diff files: the message carries git's reason" "no merge base"
+expect_error_text "run_git/branch-diff files: no merge base is one error line" 1 other false "no merge base"
 
 rg_bare=$(mktemp -d "$tmp/bare-XXXXXX")
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$checklist_script" origin main
-expect_error "run_git/pr-checklist: outside a repository" 1 other false
-expect_error_message "require_repo/pr-checklist: outside a repository, the contract wording" "$not_in_repo"
+expect_error_text "run_git/pr-checklist: outside a repository" 1 other false "$not_in_repo"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" files origin main "$(mktemp -d "$tmp/folder-XXXXXX")"
-expect_error "run_git/branch-diff files: outside a repository" 1 other false
-expect_error_message "require_repo/branch-diff files: outside a repository, the contract wording" "$not_in_repo"
+expect_error_text "run_git/branch-diff files: outside a repository" 1 other false "$not_in_repo"
 LC_ALL=C PLAIN_DIR="$rg_bare" run_plain "$diff_script" file origin main base.txt
-expect_error "require_repo/branch-diff file: outside a repository" 1 other false
-expect_error_message "require_repo/branch-diff file: outside a repository, the contract wording" "$not_in_repo"
+expect_error_text "require_repo/branch-diff file: outside a repository" 1 other false "$not_in_repo"
 
 # ---- branch-state.sh ----
 # The "remotes" are local bare repositories, so the script really fetches from them.
@@ -1375,21 +1388,18 @@ expect_jq "branch-state/in sync: branch, remote and remote branch" '. == {branch
 git -C "$bs_root/work" checkout -q --detach
 PLAIN_DIR="$bs_root/work" run_plain "$bs_script" create-pr
 git -C "$bs_root/work" checkout -q feat
-expect_error "branch-state/detached HEAD" 1 other false
-expect_error_message "branch-state/detached HEAD, message" "Not on a branch"
+expect_error_text "branch-state/detached HEAD" 1 other false "Not on a branch"
 expect_error_message "branch-state/detached HEAD, the hint names the skill" '`/create-pr`'
 
 git -C "$bs_root/work" checkout -q -b loose
 PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
-expect_error "branch-state/no upstream" 1 other false
-expect_error_message "branch-state/no upstream, message" "has no remote tracking branch"
+expect_error_text "branch-state/no upstream" 1 other false "has no remote tracking branch"
 expect_error_message "branch-state/no upstream, the push command names the branch" "git push -u origin loose"
 
 # the upstream is a local branch: the old text took its name for a remote and said "check your network"
 git -C "$bs_root/work" checkout -q -b follows-main --track main
 PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
-expect_error "branch-state/the upstream is a local branch" 1 other false
-expect_error_message "branch-state/the upstream is a local branch, message" "local branch"
+expect_error_text "branch-state/the upstream is a local branch" 1 other false "local branch"
 git -C "$bs_root/work" checkout -q feat
 
 # local and remote branch names differ
@@ -1420,41 +1430,35 @@ git -C "$bs_behind/other" checkout -q feat
 bs_commit "$bs_behind/other" more
 git -C "$bs_behind/other" push -q origin feat
 PLAIN_DIR="$bs_behind/work" run_plain "$bs_script" create-pr
-expect_error "branch-state/behind the remote" 1 other false
-expect_error_message "branch-state/behind the remote, message" "behind origin/feat"
+expect_error_text "branch-state/behind the remote" 1 other false "behind origin/feat"
 expect_error_message "branch-state/behind the remote, hint" 'then re-run `/create-pr`.'
 
 bs_commit "$bs_behind/work" mine
 PLAIN_DIR="$bs_behind/work" run_plain "$bs_script"
-expect_error "branch-state/both behind and ahead" 1 other false
-expect_error_message "branch-state/both behind and ahead says behind first" "behind origin/feat"
+expect_error_text "branch-state/both behind and ahead" 1 other false "behind origin/feat"
 
 bs_ahead=$(mktemp -d "$tmp/bs-XXXXXX")
 make_bs_repo "$bs_ahead"
 bs_commit "$bs_ahead/work" mine
 PLAIN_DIR="$bs_ahead/work" run_plain "$bs_script"
-expect_error "branch-state/ahead of the remote" 1 other false
-expect_error_message "branch-state/ahead of the remote, message" "not on origin/feat yet"
+expect_error_text "branch-state/ahead of the remote" 1 other false "not on origin/feat yet"
 
 # the remote is configured but its repository cannot be fetched
 bs_broken=$(mktemp -d "$tmp/bs-XXXXXX")
 make_bs_repo "$bs_broken"
 git -C "$bs_broken/work" config remote.origin.url "$bs_broken/no-such-repo.git"
 PLAIN_DIR="$bs_broken/work" run_plain "$bs_script"
-expect_error "branch-state/the fetch fails" 1 other false
-expect_error_message "branch-state/the fetch fails, message" "Could not fetch origin"
+expect_error_text "branch-state/the fetch fails" 1 other false "Could not fetch origin"
 
 # the branch config names a remote that does not exist
 bs_gone=$(mktemp -d "$tmp/bs-XXXXXX")
 make_bs_repo "$bs_gone"
 git -C "$bs_gone/work" config branch.feat.remote gone
 PLAIN_DIR="$bs_gone/work" run_plain "$bs_script"
-expect_error "branch-state/the configured remote does not exist" 1 other false
-expect_error_message "branch-state/the configured remote does not exist, message" "No remote named gone"
+expect_error_text "branch-state/the configured remote does not exist" 1 other false "No remote named gone"
 
 PLAIN_DIR="$rg_bare" run_plain "$bs_script"
-expect_error "branch-state/outside a repository" 1 other false
-expect_error_message "branch-state/outside a repository, the contract wording" "$not_in_repo"
+expect_error_text "branch-state/outside a repository" 1 other false "$not_in_repo"
 run_plain "$bs_script" a b
 expect_error "branch-state/usage: two arguments" 2 usage false
 run_plain "$bs_script" other-skill
@@ -1546,20 +1550,17 @@ jq -e '.skill == "review-pr" and (.prDir | test("/review-pr-[A-Za-z0-9]+$")) and
 # every failure leaves no folder behind and names the skill in the hint
 pf_case_tmp=$(mktemp -d "$tmp/pf-case-XXXXXX")
 PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr
-expect_error "preflight/outside a repository" 1 other false
-expect_error_message "preflight/outside a repository, hint names the skill" '`/create-pr`'
+expect_error_text "preflight/outside a repository" 1 other false '`/create-pr`'
 expect_no_pr_folder "preflight/outside a repository makes no folder" "$pf_case_tmp"
 
 pf_run "$stub" "$pf_case_tmp" review-pr nowhere
-expect_error "preflight/unknown remote" 1 other false
-expect_error_message "preflight/unknown remote, message" "No remote named nowhere"
+expect_error_text "preflight/unknown remote" 1 other false "No remote named nowhere"
 expect_no_pr_folder "preflight/unknown remote makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 fail_stub "$stub" api-user 4 "authentication required"
 pf_run "$stub" "$pf_case_tmp" review-pr origin
-expect_error "preflight/auth failure" 10 auth false
-expect_error_message "preflight/auth failure, hint names the skill" '`/review-pr`'
+expect_error_text "preflight/auth failure" 10 auth false '`/review-pr`'
 expect_no_pr_folder "preflight/auth failure makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
@@ -1571,16 +1572,14 @@ expect_no_pr_folder "preflight/repository not found makes no folder" "$pf_case_t
 stub=$(pf_stub)
 echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":null}' > "$stub/repo-view.out"
 pf_run "$stub" "$pf_case_tmp" create-pr
-expect_error "preflight/repository without a default branch" 1 other false
-expect_error_message "preflight/repository without a default branch, message" "no default branch"
+expect_error_text "preflight/repository without a default branch" 1 other false "no default branch"
 expect_no_pr_folder "preflight/repository without a default branch makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 pf_blocked=$(mktemp -d "$tmp/pf-blocked-XXXXXX")
 : > "$pf_blocked/dotclaude-dev"
 pf_run "$stub" "$pf_blocked" create-pr
-expect_error "preflight/temporary folder cannot be created" 1 other false
-expect_error_message "preflight/temporary folder cannot be created, message" "temporary folder"
+expect_error_text "preflight/temporary folder cannot be created" 1 other false "temporary folder"
 
 pf_run "$stub" "$pf_case_tmp" other-skill origin
 expect_error "preflight/usage: unknown skill" 2 usage false
@@ -1589,16 +1588,13 @@ expect_error "preflight/usage: review-pr without a remote" 2 usage false
 pf_run "$stub" "$pf_case_tmp" create-pr origin
 expect_error "preflight/usage: create-pr finds its remote itself" 2 usage false
 pf_run "$stub" "$pf_case_tmp" review-pr origin extra
-expect_error "preflight/usage: three arguments" 2 usage false
-expect_error_message "preflight/usage: the message names the script and its arguments, nothing else" \
-  "Wrong arguments. Usage: preflight.sh create-pr | review-pr <remote>, see the header of the script."
+expect_error_text "preflight/usage: three arguments" 2 usage false "Wrong arguments. Usage: preflight.sh create-pr | review-pr <remote>, see the header of the script."
 expect_no_pr_folder "preflight/usage errors make no folder" "$pf_case_tmp"
 
 # create-pr: the branch checks come first, so a failure makes no gh call and no folder
 stub=$(pf_stub)
 PF_REPO=$(pf_branch_repo loose no-upstream) pf_run "$stub" "$pf_case_tmp" create-pr
-expect_error "preflight/create-pr: a branch without upstream" 1 other false
-expect_error_message "preflight/create-pr: a branch without upstream, message" "has no remote tracking branch"
+expect_error_text "preflight/create-pr: a branch without upstream" 1 other false "has no remote tracking branch"
 expect_error_message "preflight/create-pr: a branch without upstream, hint names the skill" '`/create-pr`'
 expect_no_pr_folder "preflight/create-pr: a branch without upstream makes no folder" "$pf_case_tmp"
 [[ ! -f $stub/calls.log ]] && report "preflight/create-pr: a branch without upstream makes no gh call" ok ||
@@ -1607,8 +1603,7 @@ expect_no_pr_folder "preflight/create-pr: a branch without upstream makes no fol
 # create-pr on the default branch: the guard needs the default branch from gh, still no folder
 stub=$(pf_stub)
 PF_REPO=$(pf_branch_repo main) pf_run "$stub" "$pf_case_tmp" create-pr
-expect_error "preflight/create-pr: on the default branch" 1 other false
-expect_error_message "preflight/create-pr: on the default branch, message" "Branch main is the default branch"
+expect_error_text "preflight/create-pr: on the default branch" 1 other false "Branch main is the default branch"
 expect_error_message "preflight/create-pr: on the default branch, hint names the skill" '`/create-pr`'
 expect_no_pr_folder "preflight/create-pr: on the default branch makes no folder" "$pf_case_tmp"
 
@@ -1677,20 +1672,17 @@ expect_text "load_preflight/a file without skill leaves it empty" "$tmp/data.out
 
 lp_missing=$(mktemp -d "$tmp/preflight-XXXXXX")
 run_plain "$tmp/contract-call.sh" load_preflight "$lp_missing"
-expect_error "load_preflight/folder without preflight.json" 1 other false
-expect_error_message "load_preflight/folder without preflight.json, what to do" "Run preflight first"
+expect_error_text "load_preflight/folder without preflight.json" 1 other false "Run preflight first"
 
 lp_partial=$(mktemp -d "$tmp/preflight-XXXXXX")
 echo '{"skill":"create-pr","host":"h"}' > "$lp_partial/preflight.json"
 run_plain "$tmp/contract-call.sh" load_preflight "$lp_partial"
-expect_error "load_preflight/a file without repoUrl and repoPath" 1 other false
-expect_error_message "load_preflight/a file without repoUrl and repoPath, what is missing" "lacks host, repoUrl or repoPath"
+expect_error_text "load_preflight/a file without repoUrl and repoPath" 1 other false "lacks host, repoUrl or repoPath"
 
 lp_bad=$(mktemp -d "$tmp/preflight-XXXXXX")
 echo 'not json' > "$lp_bad/preflight.json"
 run_plain "$tmp/contract-call.sh" load_preflight "$lp_bad"
-expect_error "load_preflight/a file that is not JSON" 1 other false
-expect_error_message "load_preflight/a file that is not JSON, message" "Cannot read"
+expect_error_text "load_preflight/a file that is not JSON" 1 other false "Cannot read"
 
 # write_file: the file holds the content, a failed write ends in the contract error and leaves no partial file behind
 # expect_no_tmp <name> <dir>: no .tmp-* file left from write_file
@@ -1713,13 +1705,11 @@ run_plain "$tmp/contract-call.sh" write_file "$wf_dir" out.txt "second"
 expect_text "write_file/replaces an existing file" "$wf_dir/out.txt" "second"
 
 run_plain "$tmp/contract-call.sh" write_file "$tmp/no-such-wf-folder" out.txt "x"
-expect_error "write_file/missing folder" 1 other false
-expect_error_message "write_file/missing folder, message" "does not exist"
+expect_error_text "write_file/missing folder" 1 other false "does not exist"
 
 # the temporary file is made, but moving it to the final name fails: the temporary file is removed again
 run_plain "$tmp/contract-call.sh" write_file "$wf_dir" "no-such-sub/out.txt" "x"
-expect_error "write_file/the move to the final name fails" 1 other false
-expect_error_message "write_file/the move to the final name fails, message" "Cannot write"
+expect_error_text "write_file/the move to the final name fails" 1 other false "Cannot write"
 expect_no_tmp "write_file/a failed move leaves no temporary file" "$wf_dir"
 
 if [[ $(id -u) -eq 0 ]]; then
@@ -1729,8 +1719,7 @@ else
   chmod 500 "$wf_ro"
   run_plain "$tmp/contract-call.sh" write_file "$wf_ro" out.txt "x"
   chmod 700 "$wf_ro"
-  expect_error "write_file/read-only folder" 1 other false
-  expect_error_message "write_file/read-only folder, message" "Cannot write to"
+  expect_error_text "write_file/read-only folder" 1 other false "Cannot write to"
   expect_absent "write_file/read-only folder writes nothing" "$wf_ro/out.txt"
 fi
 
@@ -1740,13 +1729,14 @@ while IFS='|' read -r label gh_exit stderr_text; do
   rm -f "$stub/pr-view.args" # this call is a bare run_gh, not one of the scripts' calls
   fail_stub "$stub" pr-view "$gh_exit" "$stderr_text"
   TEST_SKILL=create-pr run_stub "$stub" "$tmp/contract-call.sh" run_gh "the PR" pr view 1
-  jq -e '.message | endswith("then re-run `/create-pr`.")' "$tmp/data.err" > /dev/null 2>&1 &&
-    report "hint/$label names the skill" ok ||
-    report "hint/$label names the skill" fail "$(cat "$tmp/data.err")"
+  with_skill=$(jq -e '.message | endswith("then re-run `/create-pr`.")' "$tmp/data.err" > /dev/null 2>&1 && echo ok || cat "$tmp/data.err")
   run_stub "$stub" "$tmp/contract-call.sh" run_gh "the PR" pr view 1
-  jq -e '.message | endswith("then re-run.")' "$tmp/data.err" > /dev/null 2>&1 &&
-    report "hint/$label without a skill keeps the plain text" ok ||
-    report "hint/$label without a skill keeps the plain text" fail "$(cat "$tmp/data.err")"
+  without_skill=$(jq -e '.message | endswith("then re-run.")' "$tmp/data.err" > /dev/null 2>&1 && echo ok || cat "$tmp/data.err")
+  if [[ $with_skill == ok && $without_skill == ok ]]; then
+    report "hint/$label names the skill when one is known and keeps the plain text otherwise" ok
+  else
+    report "hint/$label names the skill when one is known and keeps the plain text otherwise" fail "with skill: $with_skill; without: $without_skill"
+  fi
 done << 'EOT'
 auth|4|authentication required
 rate limit|1|gh: API rate limit exceeded (HTTP 403)
@@ -1821,20 +1811,17 @@ done
 
 dir=$(refs_folder 9 "$REFS_F" main)
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/the PR head cannot be fetched" 1 other false
-expect_error_message "pr-refs/the PR head cannot be fetched, message" "Could not fetch the head of PR 9"
+expect_error_text "pr-refs/the PR head cannot be fetched" 1 other false "Could not fetch the head of PR 9"
 
 # the PR was force-pushed after pr.json was written: the commit pr.json names is not part of the fetched head
 dir=$(refs_folder 7 "$REFS_A" main)
 jq '.headRefOid = "0123456789012345678901234567890123456789"' "$dir/pr.json" > "$dir/pr.new" && mv "$dir/pr.new" "$dir/pr.json"
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/the commit of pr.json is gone after a force-push" 1 other false
-expect_error_message "pr-refs/the commit of pr.json is gone, message says force-pushed" "force-pushed"
+expect_error_text "pr-refs/the commit of pr.json is gone after a force-push" 1 other false "force-pushed"
 
 dir=$(refs_folder 7 "$REFS_F" no-such-base)
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/the base branch does not exist" 1 other false
-expect_error_message "pr-refs/the base branch does not exist, message" "Could not fetch base branch no-such-base"
+expect_error_text "pr-refs/the base branch does not exist" 1 other false "Could not fetch base branch no-such-base"
 
 # a base branch without any common commit with the PR head
 git -C "$refs_root/work" checkout -q --orphan unrelated
@@ -1845,8 +1832,7 @@ git -C "$refs_root/work" commit -q -m unrelated
 git -C "$refs_root/work" push -q origin unrelated
 dir=$(refs_folder 7 "$REFS_F" unrelated)
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/no common commit" 1 other false
-expect_error_message "pr-refs/no common commit, message" "merge base"
+expect_error_text "pr-refs/no common commit" 1 other false "merge base"
 
 # pr.json is read as data: what is not a number or a commit id is refused before git runs
 for bad in '{"number":"7;x","headRefOid":"'"$REFS_F"'","baseRefName":"main"}' '{"number":7,"headRefOid":"not-a-commit","baseRefName":"main"}' '{"number":7,"headRefOid":"'"$REFS_F"'","baseRefName":""}' '{"number":7,"headRefOid":"'"$REFS_F"'"}'; do
@@ -1865,8 +1851,7 @@ printf '%s\n' '{"host":"github.example.local","repoUrl":"https://github.example.
 PLAIN_DIR="$refs_user" run_plain "$refs_script" "$dir"
 expect_error "pr-refs/preflight.json without a remote" 1 other false
 PLAIN_DIR="$rg_bare" run_plain "$refs_script" "$dir"
-expect_error "pr-refs/outside a repository" 1 other false
-expect_error_message "pr-refs/outside a repository, the contract wording" "$not_in_repo"
+expect_error_text "pr-refs/outside a repository" 1 other false "$not_in_repo"
 run_plain "$refs_script"
 expect_error "pr-refs/usage: no arguments" 2 usage false
 run_plain "$refs_script" a b
