@@ -153,13 +153,7 @@ Read the file `<pr-dir>/alert-<N>.json` of every kept alert once and keep its `s
 
 There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing branch/PR to an alert automatically once a scan of that branch clears the alert's fingerprint; this is not settable via `gh api`/`gh pr create`, so `create-pr` does not attempt it and adds no PR body section for alerts.
 
-**Manual-assignment gate.** If at least one alert was confirmed (not `N/A`), pause here — the alert's own assignee and its Development-section branch link are both GitHub UI-only actions with no API equivalent, so they can't be automated. Show the author each confirmed alert's `url` (from `<codeql-context>`) and ask them to (1) assign themselves to the alert and (2) link `<branch>` under the alert's Development section, both in the GitHub UI. Then ask with `AskUserQuestion`:
-
-- Question: "Assign yourself to each linked alert and link this branch under its Development section (both in the GitHub UI), then continue."
-- Options:
-  - "Done, continue" — the only option; proceed to Step 4
-
-This is not verified — `create-pr` has no way to check either action happened — it is an explicit acknowledgment gate, not a hard block on unconfirmed state.
+**Manual steps for linked alerts.** The alert's own assignee and its Development-section branch link are GitHub UI-only actions with no API equivalent, and `create-pr` cannot verify them. They do not stop the flow: keep the `url` of every kept alert (from `<codeql-context>`) for the final message of Step 8.
 
 ### Step 4 — Label selection
 
@@ -299,4 +293,4 @@ Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" create <pr-dir> <yes|no> ["<label>" ...]
 ```
 
-Display the PR URL.
+Display the PR URL. If at least one CodeQL alert was kept, add below it, for each alert: "Still to do in the GitHub UI for alert #<N> (`<url>`): assign yourself to it and link branch `<branch>` under its Development section."

@@ -1969,6 +1969,13 @@ else
   report "skills/create-pr dialogs: one rule for other answers, named options for not found and closed" fail "rule or option names missing in Steps 2 and 3"
 fi
 
+# the one-option gate for linked alerts is gone: the to-dos come after the PR URL
+if ! grep -qF 'Done, continue' "$create_skill" && grep -qF 'Still to do in the GitHub UI for alert' "$create_skill"; then
+  report "skills/create-pr alert to-dos are a closing message, not a one-option dialog" ok
+else
+  report "skills/create-pr alert to-dos are a closing message, not a one-option dialog" fail "the gate text is left or the closing message is missing"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
