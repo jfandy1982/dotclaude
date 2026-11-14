@@ -22,78 +22,31 @@ Anything else (a token that is neither `--issue`, `--alert` nor part of a value,
 
 > "Usage: `/create-pr [--issue <numbers>] [--alert <numbers>]` — numbers comma-separated, or N/A."
 
-**Precondition 2 — Remote tracking branch**
+**Precondition 2 — Preflight**
+
+One script runs every check that needs no judgment, in this order: this is a git repository; the branch has an upstream on a remote, is not behind it and has no commits that are not on it yet (the remote is fetched first); the login on the host of the remote works; the repository behind the remote is readable; the branch is not the default branch. Then it creates a temporary folder. What is collected for the PR is saved in that folder, so later steps can read parts of it instead of carrying all of it in the conversation.
 
 ```bash
-git branch --show-current
-git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null
-```
-
-No output from the first command (detached HEAD) → stop:
-
-> "Not on a branch. Check out a branch, then re-run `/create-pr`."
-
-Store the output as `<branch>`.
-
-If no output from the second command → stop:
-
-> "Branch has no remote tracking branch. Push it first (`git push -u origin <branch>`) then re-run `/create-pr`."
-
-Extract the remote name from the output (e.g. `origin/feat/foo` → remote is `origin`). Store as `<remote>`.
-
-**Precondition 3 — Local branch up to date with remote**
-
-```bash
-git fetch <remote>
-```
-
-Non-zero exit → stop:
-
-> "Failed to fetch from `<remote>` — check your network connection then re-run `/create-pr`."
-
-```bash
-git rev-list --left-right --count @{u}...HEAD
-```
-
-The output is `<behind>` and `<ahead>`, separated by a tab. `<behind>` above 0 → stop:
-
-> "Local branch is behind `<remote>` — pull the latest changes (`git pull`) then re-run `/create-pr`."
-
-`<ahead>` above 0 → stop:
-
-> "Local branch has commits that are not on `<remote>` yet — push first (`git push`) then re-run `/create-pr`."
-
-**Precondition 4 — Preflight**
-
-One script checks that this is a git repository, cuts the host out of the URL of `<remote>`, confirms the login on that host, reads the repository behind the remote URL and creates a temporary folder. What is collected for the PR is saved in that folder, so later steps can read parts of it instead of carrying all of it in the conversation.
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" create-pr <remote>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh" create-pr
 ```
 
 Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.
 
-The script prints one JSON line. Store `defaultBranch` as `<default-branch>` and `prDir` as `<pr-dir>`. Host, repository URL and path and the login stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
+The script prints one JSON line. Store `branch` as `<branch>`, `remote` as `<remote>`, `defaultBranch` as `<default-branch>` and `prDir` as `<pr-dir>`. Host, repository URL and path, the login and the branch name on the remote stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
 
-The folder later holds `diff/` (one diff file per changed file), `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
-
-**Precondition 5 — Default-branch guard**
-
-If `<branch>` == `<default-branch>` → stop:
-
-> "Branch `<branch>` is the default branch — create a feature branch first, then re-run `/create-pr`."
+The folder later holds `diff/` (one diff file per changed file), `file-table.json`, `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
 Every stored value is reused in later steps; never re-run a command whose result is stored.
 
 ## Mode Detection
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" list-open-prs <pr-dir> <branch>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" list-open-prs <pr-dir>
 ```
 
-The script prints the open PRs of `<branch>` as a JSON array.
+The script prints the open PRs of the branch as a JSON array of `{number, title, url}`.
 
-- Array not empty → **update mode is the only path**. (not yet implemented — stop with: "Update mode is not yet implemented.")
+- Array not empty → **update mode is the only path**. (not yet implemented — stop with: "Update mode is not yet implemented. PR #`<number>` (`<url>`) is already open for this branch.", with the first entry of the array.)
 - Array empty → proceed to create flow.
 
 ## Create Flow
@@ -107,9 +60,13 @@ git log <remote>/<default-branch>..HEAD
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/branch-diff.sh" files <remote> <default-branch> <pr-dir>
 ```
 
-Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 3 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); the script diffs against the merge-base, so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
+Use `<remote>/<default-branch>` (not local `<default-branch>`) — Precondition 2 already fetched `<remote>`, so the remote-tracking ref is guaranteed current while the local branch may be stale. `git log` uses two dots (commits reachable from `HEAD` not from `<remote>/<default-branch>`); the script diffs against the merge-base, so upstream changes on `<default-branch>` since the branch was cut don't show up as noise.
 
-The script prints a JSON table with one entry per changed file. Store it as `<file-table>` and do not run the script again; after a failed run do not read any file in `<pr-dir>/diff/`.
+The script prints a JSON table with one entry per changed file and saves it as `<pr-dir>/file-table.json`. Store it as `<file-table>` and do not run the script again; after a failed run do not read any file in `<pr-dir>/diff/`.
+
+An empty table (`[]`) → stop:
+
+> "Branch `<branch>` has no changes compared to `<remote>/<default-branch>`. There is nothing to open a PR for."
 
 - Fields: `path`; `renamedFrom` (old path of a renamed file, else `null`); `added` and `removed` (line counts, `null` for a binary file); `generated`; `diff` (path of the file's diff, or `null`).
 - `diff` is set → read that file, one read per file.
@@ -149,11 +106,11 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" issue <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number. Not a hard block.
-- Any other non-zero exit → stop, as described in Precondition 4.
+- Any other non-zero exit → stop, as described in Precondition 2.
 - State `CLOSED` → ask with `AskUserQuestion` ("Issue #N is already closed — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `OPEN` → keep it.
 
-If the answer is `N/A`, skip the confirmation below and continue with `<closes>` and `<issue-context>` empty.
+If the answer is `N/A`, or every number was dropped (an empty list counts like `N/A`), skip the confirmation below and continue with `<closes>` and `<issue-context>` empty.
 
 Otherwise, ask with `AskUserQuestion` to show a confirmation listing each issue number with its fetched title:
 
@@ -177,11 +134,11 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" alert <N> <pr-dir>
 ```
 
 - Exit 11 (`not_found`) → ask with `AskUserQuestion` to correct or drop the number (the alert may not exist, code scanning may be off, or you may lack access). Not a hard block.
-- Any other non-zero exit → stop, as described in Precondition 4.
+- Any other non-zero exit → stop, as described in Precondition 2.
 - State other than `open` (`fixed`, `dismissed`) → ask with `AskUserQuestion` ("Alert #N is already <state> — still include?") with options "Include anyway" (keep it) / "Drop it" (remove it from the list). Not a hard block.
 - State `open` → keep it.
 
-If the answer is `N/A`, skip the confirmation below and continue with `<codeql-context>` empty.
+If the answer is `N/A`, or every number was dropped (an empty list counts like `N/A`), skip the confirmation below and continue with `<codeql-context>` empty.
 
 Otherwise, ask with `AskUserQuestion` to show a confirmation listing each alert number with its `ruleId`:
 
@@ -208,7 +165,7 @@ This is not verified — `create-pr` has no way to check either action happened 
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels <pr-dir>
 ```
 
-The script writes all labels to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each label. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
+The script writes the labels that may be chosen to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each of them. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
 
 **Taxonomy detection** is done by the script:
 
@@ -223,7 +180,7 @@ If no `type:` label could be inferred, leave the slot empty rather than blocking
 
 #### Verification
 
-Whenever a label is set or changed (initial inference, or a correction made in the Step 7 loop), verify the label name against `<pr-dir>/labels.json` via `jq`, not by eyeballing the array:
+Whenever a label is set or changed (initial inference, or a correction made in the Step 7 loop), verify the label name against `<pr-dir>/labels.json` (the labels the script printed, so in taxonomy mode only `type:` and `aspect:` labels) via `jq`, not by eyeballing the array:
 
 ```bash
 jq --arg name "<label-name>" 'any(.[]; .name == $name)' <pr-dir>/labels.json
@@ -284,7 +241,7 @@ Derive the title from the branch context gathered in Step 1 (commit messages, br
 
 Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
 
-No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, leave `<title>` as a placeholder needing author input — surfaced as missing in the Step 7 preview.
+No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4) as the type prefix. If no `type:` label was selected either, leave `<title>` empty: an empty `<title>` is the placeholder that needs author input, surfaced as missing in the Step 7 preview. Never write anything else in its place (no `TODO`, no `<type>: <summary>`).
 
 Format validation against conventional commit format (`<type>(<optional scope>): <description>`) happens in the Step 7 preview, not here.
 
@@ -307,7 +264,7 @@ Default `<draft-state>` to "ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is a placeholder or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
 Ask with `AskUserQuestion`:
 
@@ -322,15 +279,17 @@ Loop has no fixed iteration cap — repeat until the author chooses "Looks good,
 
 ### Step 8 — Create PR
 
+`<title>` is empty → write nothing: go back to the loop above and ask for the title under "Change something else".
+
 Write `<title>` as plain text to `<pr-dir>/title.txt` and `<body>` to `<pr-dir>/body.txt` with the Write tool, exactly as shown in the preview. Never put title or body into a shell command: both contain backticks, which the shell would run.
 
-Check that the body can be read by the other skills:
+Check that the body can be read by the other skills and names every changed file:
 
 ```bash
-jq -Rs -f "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-parse.jq" <pr-dir>/body.txt
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-body-check.sh" <pr-dir>
 ```
 
-Expected: `fileRisk.state` is `ok`, `closes.numbers` equals the issue numbers in `<closes>`, and `mergeDanger` is `null` exactly when `<merge-danger>` is empty. Anything else means the body drifted from the contract: show the difference in the preview, go back to the loop above, and run no `gh pr create`.
+Expected: `fileRisk.state` is `ok`, `uncovered` is `[]`, `closes.numbers` equals the issue numbers in `<closes>`, and `mergeDanger` is `null` exactly when `<merge-danger>` is empty. Anything else means the body drifted from the contract. Correct it yourself first (add the entries for the `uncovered` files, fix the section), write `<pr-dir>/body.txt` again and run the check again; name the correction in one line when you display the PR URL. If the second check fails too, show the difference in the preview, go back to the loop above, and run no `gh pr create`.
 
 Then create the PR. Write `yes` for a draft (`<draft-state>` is "Draft") and `no` otherwise, followed by one argument per label in `<selected-labels>` (none if empty). The script reads both files and prints the PR URL:
 

@@ -1902,10 +1902,27 @@ else
 fi
 
 # The setup comes from one preflight call; no host, repository or remote URL is passed around any more
-if grep -qF 'scripts/preflight.sh" create-pr <remote>' "$create_skill" && ! grep -qE 'remote-host\.sh|gh api user|pr-create\.sh" repo|<host>|<repo-url>|<repo-path>|<remote-url>' "$create_skill"; then
+if grep -qF 'scripts/preflight.sh" create-pr' "$create_skill" && ! grep -qF 'scripts/preflight.sh" create-pr <remote>' "$create_skill" &&
+  ! grep -qE 'remote-host\.sh|gh api user|pr-create\.sh" repo|<host>|<repo-url>|<repo-path>|<remote-url>' "$create_skill"; then
   report "skills/create-pr Preconditions use preflight.sh" ok
 else
-  report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing or an old setup call or host variable is left"
+  report "skills/create-pr Preconditions use preflight.sh" fail "preflight call missing, still passing a remote, or an old setup call or host variable is left"
+fi
+
+# the branch checks are inside preflight.sh and the open-PR check reads the branch from preflight.json
+if ! grep -qE '@\{u\}|git fetch <remote>|git rev-list|git branch --show-current|gh repo view' "$create_skill" &&
+  grep -qF 'pr-create.sh" list-open-prs <pr-dir>' "$create_skill" && ! grep -qF 'list-open-prs <pr-dir> <branch>' "$create_skill"; then
+  report "skills/create-pr takes branch, remote and default branch from preflight.sh" ok
+else
+  report "skills/create-pr takes branch, remote and default branch from preflight.sh" fail "an old branch check command is left or list-open-prs still gets the branch"
+fi
+
+# Step 8 checks the body with pr-body-check.sh, which also names the files the body misses
+if grep -qF 'scripts/pr-body-check.sh" <pr-dir>' "$create_skill" && grep -qF '`uncovered` is `[]`' "$create_skill" &&
+  ! grep -qF 'scripts/pr-body-parse.jq" <pr-dir>' "$create_skill"; then
+  report "skills/create-pr Step 8 uses pr-body-check.sh" ok
+else
+  report "skills/create-pr Step 8 uses pr-body-check.sh" fail "script call or the uncovered check is missing, or the old parser call is left"
 fi
 
 # Step 5 reads the body format from pr-body.md and Step 8 checks mergeDanger; the skeleton lives only in pr-body.md
