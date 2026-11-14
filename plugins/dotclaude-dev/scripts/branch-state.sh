@@ -17,7 +17,7 @@ SUBCOMMANDS='[create-pr]'
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 main() {
-  local skill=${1:-} branch remote merge remote_branch counts behind ahead
+  local skill=${1:-} branch remote merge remote_branch counts behind ahead push_cmd
   [[ $# -le 1 ]] || usage
   case $skill in
     create-pr) SKILL=$skill ;;
@@ -44,8 +44,11 @@ main() {
   IFS=$'\t' read -r behind ahead <<< "$counts"
   [[ $behind -eq 0 ]] ||
     die "branch" "Local branch is behind $remote/$remote_branch — pull the latest changes (\`git pull\`), then $(rerun)."
+  # a plain "git push" is refused when the upstream has another name than the local branch (push.default simple)
+  push_cmd="git push"
+  [[ $remote_branch == "$branch" ]] || push_cmd="git push $remote HEAD:$remote_branch"
   [[ $ahead -eq 0 ]] ||
-    die "branch" "Local branch has commits that are not on $remote/$remote_branch yet — push first (\`git push\`), then $(rerun)."
+    die "branch" "Local branch has commits that are not on $remote/$remote_branch yet — push first (\`$push_cmd\`), then $(rerun)."
   jq -nc --arg branch "$branch" --arg remote "$remote" --arg remoteBranch "$remote_branch" '{branch: $branch, remote: $remote, remoteBranch: $remoteBranch}'
   return 0
 }

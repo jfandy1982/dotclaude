@@ -1479,6 +1479,11 @@ bs_commit "$bs_root/work" x
 git -C "$bs_root/work" push -q -u origin fix-x:fix/x-new
 PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
 expect_jq "branch-state/different local and remote branch names" '. == {branch: "fix-x", remote: "origin", remoteBranch: "fix/x-new"}'
+# ahead with different names: plain "git push" would be refused, so the hint names the target
+bs_commit "$bs_root/work" y
+PLAIN_DIR="$bs_root/work" run_plain "$bs_script"
+expect_error_text "branch-state/ahead with different names names the push target" 1 other false "git push origin HEAD:fix/x-new"
+git -C "$bs_root/work" reset -q --hard origin/fix/x-new
 git -C "$bs_root/work" checkout -q feat
 
 # a branch name with a dot and a slash, and a remote name with a slash
@@ -1550,6 +1555,7 @@ git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
 # pf_branch_repo <branch> [no-upstream]: a repository for create-pr on that branch; the upstream is origin/<branch>, already fetched
 pf_branch_repo() {
   local branch=$1 upstream=${2:-} dir
+  # a second argument is "no-upstream" or the name of the upstream branch on origin (default: the same as the local name)
   dir=$(mktemp -d "$tmp/pf-repo-XXXXXX")
   git -C "$dir" init -q
   git -C "$dir" symbolic-ref HEAD "refs/heads/$branch"
@@ -1561,8 +1567,8 @@ pf_branch_repo() {
   git -C "$dir" commit -q -m A
   if [[ $upstream != no-upstream ]]; then
     git -C "$dir" config "branch.$branch.remote" origin
-    git -C "$dir" config "branch.$branch.merge" "refs/heads/$branch"
-    git -C "$dir" update-ref "refs/remotes/origin/$branch" HEAD
+    git -C "$dir" config "branch.$branch.merge" "refs/heads/${upstream:-$branch}"
+    git -C "$dir" update-ref "refs/remotes/origin/${upstream:-$branch}" HEAD
   fi
   printf '%s\n' "$dir"
   return 0
@@ -1684,6 +1690,13 @@ PF_REPO=$(pf_branch_repo main) pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error_text "preflight/create-pr: on the default branch" 1 other false "Branch main is the default branch"
 expect_error_message "preflight/create-pr: on the default branch, hint names the skill" '`/create-pr`'
 expect_no_pr_folder "preflight/create-pr: on the default branch makes no folder" "$pf_case_tmp"
+
+# a feature branch whose upstream is the default branch (git switch -c feat origin/main): a PR would have head = base
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo feat main) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error_text "preflight/create-pr: the upstream is the default branch" 1 other false "tracks the default branch main"
+expect_error_text "preflight/create-pr: the upstream is the default branch, hint pushes the branch" 1 other false "git push -u origin feat"
+expect_no_pr_folder "preflight/create-pr: the upstream is the default branch makes no folder" "$pf_case_tmp"
 
 # a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
 pf_cred_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
