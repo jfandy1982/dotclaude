@@ -35,7 +35,8 @@ main() {
   # user and password of an http(s) URL can be a token: they never leave this script (the user of an ssh URL is no secret)
   url=$(printf '%s\n' "$url" | sed -E 's#^([Hh][Tt][Tt][Pp][Ss]?://)[^/]*@#\1#')
   host=$(host_of "$url")
-  [[ -n $host ]] || die "remote host" "Cannot read a host from the URL $url."
+  # a relative path such as ../other.git has "." as its host
+  [[ $host =~ ^[A-Za-z0-9] ]] || die "remote host" "Cannot read a host from the URL $url."
   [[ $count -eq 2 ]] || printf '%s\n' "$url"
   printf '%s\n' "$host"
   return 0

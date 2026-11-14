@@ -99,6 +99,8 @@ cmd_files() {
 
 cmd_file() {
   local remote=$1 base=$2 path=$3 old=${4:-}
+  # an empty path would become the pathspec ":(top,literal)", which matches the whole repository
+  [[ -n $path ]] || usage
   require_repo
   set_range "$remote" "$base"
   file_diff "$path" "${old:-$path}"

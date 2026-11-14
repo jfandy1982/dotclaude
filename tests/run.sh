@@ -593,6 +593,13 @@ fail_stub "$stub" api-pulls 1 "gh: Not Found (HTTP 404)" '{"message":"Not Found"
 run_data "$stub" pr 7 PR_DIR
 expect_error_empty "pr/base commit call fails" 11 not_found false "$PR_DIR"
 
+# the base commit answer has no sha: the string "null" must not be stored as baseRefOid
+stub=$(new_stub)
+cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
+printf '%s\n' '{"base":{}}' > "$stub/api-pulls.out"
+run_data "$stub" pr 7 PR_DIR
+expect_error_empty "pr/an answer without a base commit" 1 other false "$PR_DIR"
+
 stub=$(new_stub)
 fail_stub "$stub" api-pulls 1 "error connecting to github.example.local"
 cp "$fixtures/gh/pr-base.json" "$stub/pr-view.out"
@@ -663,6 +670,8 @@ EOF
 
 run_plain "$host_script" --url "https:///x"
 expect_error "remote-host/no host in the URL" 1 other false
+run_plain "$host_script" --url "../other.git"
+expect_error "remote-host/a relative path is no host" 1 other false
 run_plain "$host_script"
 expect_error "remote-host/no arguments" 2 usage false
 
@@ -1100,6 +1109,8 @@ run_plain "$diff_script" files origin main
 expect_error "branch-diff/usage: files with too few arguments" 2 usage false
 run_plain "$diff_script" file origin main
 expect_error "branch-diff/usage: file with too few arguments" 2 usage false
+run_plain "$diff_script" file origin main ""
+expect_error "branch-diff/usage: file with an empty path" 2 usage false
 
 # ---- pr-body-check.sh ----
 # The body of create-pr must name every changed file: as its path, below a directory entry, or in a brace pattern.

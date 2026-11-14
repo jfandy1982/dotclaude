@@ -1,4 +1,4 @@
-# Error contract of the scripts that call gh or git (preflight.sh, branch-state.sh, pr-data.sh, pr-create.sh, pr-refs.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
+# Error contract of the scripts that call gh or git (preflight.sh, branch-state.sh, pr-data.sh, pr-create.sh, pr-refs.sh, pr-body-check.sh, remote-host.sh, branch-diff.sh, pr-checklist.sh). Sourced, not run.
 # The sourcing script sets SCRIPT and SUBCOMMANDS (for the usage message) and may set VERB (default "read", "create" for writes).
 # On failure: nothing on stdout, one JSON line on stderr {error, exit, retryable, what, message}
 # and a fixed exit code: 10 auth, 11 not_found, 12 rate_limited, 13 network, 1 other, 2 usage.
@@ -69,7 +69,7 @@ fail() {
   if grep -qiE 'error connecting to|no such host|could not resolve host|timeout|dial tcp|connection refused' "$ERR_FILE"; then
     # shortcut: a timeout after GitHub accepted the request would make a re-run create a second PR; whether gh can time out that way is unverified, so a create is never retryable
     if [[ $VERB == create ]]; then
-      emit_error network 13 false "$what" "Could not $VERB $what: cannot reach $HOST. The PR may have been created anyway: check \`gh pr list --head <branch>\` before you $(rerun)."
+      emit_error network 13 false "$what" "Could not $VERB $what: cannot reach $HOST. The PR may have been created anyway: check \`gh pr list --head "$(git branch --show-current)"\` before you $(rerun)."
     fi
     emit_error network 13 true "$what" "Could not $VERB $what: cannot reach $HOST. Check the connection, then $(rerun)."
   fi

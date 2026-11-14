@@ -42,9 +42,11 @@ cmd_pr() {
   # the repository is taken from the PR's own URL: a PR URL makes gh read another repository than --repo
   repo_path=$(printf '%s' "$json" | jq -r '.url | capture("^https://[^/]+/(?<path>.+)/pull/[0-9]+$").path' 2> /dev/null) ||
     die "PR $pr_arg" "Cannot read the PR URL returned by gh."
+  [[ -n $repo_path ]] || die "PR $pr_arg" "Cannot read the PR URL returned by gh."
   number=$(printf '%s' "$json" | jq -r '.number' 2> /dev/null) || die "PR $pr_arg" "Cannot read the PR number returned by gh."
   run_gh "base commit of PR #$number" api --hostname "$HOST" "repos/$repo_path/pulls/$number"
-  base=$(printf '%s' "$OUT" | jq -r '.base.sha' 2> /dev/null) || die "PR $pr_arg" "Cannot read the base commit returned by gh."
+  base=$(printf '%s' "$OUT" | jq -r '.base.sha // empty' 2> /dev/null) || die "PR $pr_arg" "Cannot read the base commit returned by gh."
+  [[ -n $base ]] || die "PR $pr_arg" "Cannot read the base commit returned by gh."
   json=$(printf '%s' "$json" | jq --arg repo "$REPO_URL" --arg base "$base" '. + {
     sameRepo:     ((.url | ascii_downcase) | startswith(($repo + "/pull/") | ascii_downcase)),
     isDeployment: any(.labels[]; .name == "type: deployment"),
