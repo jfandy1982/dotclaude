@@ -609,7 +609,8 @@ work=$(new_work)
 run_stub "$stub" "$create_script" labels "$work"
 printf '%s\n' '{"mode":"taxonomy","labels":[{"name":"type: bug","description":"Bug"},{"name":"aspect: ui","description":"UI"}]}' > "$tmp/create-expected.json"
 check "labels/taxonomy mode keeps type: and aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
-check "labels/labels.json holds all labels" "$work/labels.json" "$stub/label-list.out"
+jq '.labels' "$tmp/data.out" > "$tmp/create-expected.json"
+check "labels/labels.json holds only the labels that may be chosen (type: and aspect:), not priority:" "$work/labels.json" "$tmp/create-expected.json"
 expect_call "labels/limit and repository are passed" "$stub" "label list --repo $repo_url --json name,description --limit 50"
 
 stub=$(new_stub)
@@ -618,6 +619,7 @@ work=$(new_work)
 run_stub "$stub" "$create_script" labels "$work"
 jq -c '{mode: "fallback", labels: .}' "$stub/label-list.out" > "$tmp/create-expected.json"
 check "labels/fallback mode without type: or aspect: labels" "$tmp/data.out" "$tmp/create-expected.json"
+check "labels/fallback mode: labels.json holds all labels" "$work/labels.json" "$stub/label-list.out"
 
 # list-open-prs: the head is the branch name on the remote (preflight.json), PRs from forks with the same head name do not count
 stub=$(new_stub)

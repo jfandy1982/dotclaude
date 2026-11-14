@@ -3,7 +3,7 @@
 # Host and repository URL come from <pr-dir>/preflight.json (written by preflight.sh, which also reads the repository).
 #   pr-create.sh labels <pr-dir>
 #       gh label list (limit 50: the target repos have about 25 labels, raise it if a repo exceeds 50);
-#       writes <pr-dir>/labels.json (all labels), prints {mode, labels}:
+#       writes <pr-dir>/labels.json (the labels that may be chosen: the printed ones), prints {mode, labels}:
 #       "taxonomy" with the labels prefixed type: or aspect:, or "fallback" with all labels when there are none
 #   pr-create.sh list-open-prs <pr-dir>
 #       prints the open PRs of this repository whose head is the branch name on the remote (remoteBranch of
@@ -20,14 +20,15 @@ SUBCOMMANDS='labels|list-open-prs|create'
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
 cmd_labels() {
-  local dir=$1 result
+  local dir=$1 result chosen
   load_preflight "$dir"
   run_gh "labels of $REPO_URL" label list --repo "$REPO_URL" --json name,description --limit 50
   result=$(printf '%s' "$OUT" | jq -c '
     [.[] | select(.name | startswith("type:") or startswith("aspect:"))] as $taxonomy
     | if ($taxonomy | length) > 0 then {mode: "taxonomy", labels: $taxonomy} else {mode: "fallback", labels: .} end') ||
     die "labels of $REPO_URL" "Cannot read the labels returned by gh."
-  write_file "$dir" labels.json "$OUT"
+  chosen=$(printf '%s' "$result" | jq -c '.labels') || die "labels of $REPO_URL" "Cannot read the labels returned by gh."
+  write_file "$dir" labels.json "$chosen"
   printf '%s\n' "$result"
   return 0
 }
