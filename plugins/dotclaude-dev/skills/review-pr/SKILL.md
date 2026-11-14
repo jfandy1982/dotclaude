@@ -18,7 +18,7 @@ Run in order. Stop on first failure. Do not output anything while running precon
 
 Take the PR reference (first argument) and the optional review scope (second argument) from the invocation. If the PR reference is missing, ask: "PR number or URL to review?"
 
-Store the first argument exactly as given as `<pr-arg>`. Do not parse it: Precondition 3 passes it to `gh pr view`, which resolves PR numbers and PR URLs itself.
+Store the first argument exactly as given as `<pr-arg>`. Do not parse it: the script of Precondition 3 accepts a PR number or a PR URL (`http://` or `https://`) and refuses anything else, such as a branch name, `#42` or a flag, before `gh` is called.
 
 Store the second argument, if any, as `<scope-arg>`. It is interpreted later, not here.
 
@@ -46,7 +46,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-data.sh" pr <pr-arg> <pr-dir>
 
 `pr.json` keeps every fetched field and adds the base commit `baseRefOid` and the computed checks `sameRepo` and `isDeployment`, so later steps read them instead of judging the raw values. `headRefOid` is the commit the review is based on; `baseRefOid` is only kept for reference, the merge base comes from the base branch as it is when the workspace is prepared. The body gets its own file, because the body parser reads text, not JSON.
 
-Non-zero exit → stop, as described in Precondition 2.
+Non-zero exit → stop, as described in Precondition 2, except exit code 2: `<pr-arg>` is neither a PR number nor a PR URL → stop:
+
+> "`<pr-arg>` is neither a PR number nor a PR URL. Usage: `/review-pr <PR number or URL> [review-scope]`."
 
 Store the printed JSON as `<pr>`. Reuse `<pr>` and `<pr-dir>` in later steps, do not re-fetch. `<pr.files>` is not in `<pr>`; read it from `<pr-dir>/pr.json` when needed. The body is in `<pr-dir>/body.txt`.
 
@@ -162,7 +164,7 @@ Known scopes:
 | `pr-review-toolkit` | The agents of the `pr-review-toolkit` plugin (code, silent failures, tests, comments, types), chosen by what the diff contains |
 | `plain` | The main model reviews the diff itself, no agents |
 
-`<scope-arg>` from Precondition 1 is a comma-separated list of these names (e.g. `pr-review-toolkit,plain`).
+`<scope-arg>` from Precondition 1 is a comma-separated list of these names (`pr-review-toolkit,plain` and `pr-review-toolkit, plain` are the same). Clean it before checking: trim the spaces around every item, ignore upper and lower case, drop empty items and duplicates. A list that is empty after cleaning counts as empty.
 
 - Every name known → use the list as given, no question.
 - A name not in the table → stop:
