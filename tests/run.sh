@@ -1,6 +1,50 @@
 #!/usr/bin/env bash
 # Runs the script tests of plugins/dotclaude-dev/scripts. Usage: bash tests/run.sh
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
+#
+# Index: one section per line, in file order. A section starts with "# ---- <name> ----" below; the last test checks that every name is listed here.
+#   PR body parser
+#       pr-body-parse.jq: sections, File risk buckets, Closes and merge danger of a PR body
+#   worktree state
+#       worktree-state.jq: resumed, prune and previous head of a review worktree
+#   pr-data.sh: pr and refs
+#       pr-data.sh pr: PR fields, base commit, computed checks, argument validation
+#   pr-data.sh: issue, ci, feedback
+#       pr-data.sh issue, alert, ci, feedback: files written, one-line outputs, failures
+#   the fake gh itself
+#       tests/stub/gh.sh: required flags (exit 97), api answers by endpoint
+#   error contract (contract.sh)
+#       contract.sh: error classes, exit codes, retryable, the phrases of gh failures, write_file
+#   remote-host.sh
+#       remote-host.sh: host and URL of a remote, credentials dropped, scheme in any case
+#   pr-create.sh
+#       pr-create.sh labels, list-open-prs, create: files written, flags, failure classes
+#   branch-diff.sh
+#       branch-diff.sh: diff files, file table, generated files, renames, one call per folder
+#   pr-body-check.sh
+#       pr-body-check.sh: changed files that the File risk section does not name
+#   pr-checklist-parse.jq
+#       pr-checklist-parse.jq: the PR merge checklist table (fences, columns, cells)
+#   pr-checklist.sh
+#       pr-checklist.sh: rows matched against the changed files with git pathspec matching
+#   git failures: run_git puts git's own reason into the message
+#       contract.sh run_git and require_repo as seen from the git scripts
+#   branch-state.sh
+#       branch-state.sh: upstream from the git config, behind, ahead, detached HEAD
+#   preflight.sh
+#       preflight.sh: setup of create-pr and review-pr, folder only at the end, login, repository
+#   contract.sh: require_repo, load_preflight, the skill hint
+#       contract.sh: require_repo, load_preflight, the skill named in messages
+#   pr-refs.sh
+#       pr-refs.sh: PR head and base fetch, merge base, force-push, odd branch names
+#   skills: the PR skills call their scripts, agree with each other and keep the old defects out
+#       the skills call their scripts, shared rules are equal in both, old defects stay out, READMEs and manifests agree
+#   skills: manual-only, so the model never starts them from a loose description match
+#       disable-model-invocation in all three skills
+#   skills/create-pr: --issue and --alert arguments
+#       create-pr argument-hint and the number cleaning command
+#   the index at the top of this file
+#       every section of this file is listed here
 set -u
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -2013,6 +2057,18 @@ if [[ $(printf '%s\n' "$clean_lines" | wc -l) -eq 1 ]]; then
   expect_text "skills/create-pr number cleaning command" <(bash -c "$clean_cmd") $'7\n38\n42'
 else
   report "skills/create-pr number cleaning command" fail "expected exactly one cleaning command line"
+fi
+
+# ---- the index at the top of this file ----
+
+index_missing=""
+while IFS= read -r section_name; do
+  sed -n '1,/^set -u$/p' "$root/tests/run.sh" | grep -qF -- "#   $section_name" || index_missing="$index_missing [$section_name]"
+done < <(grep -E '^# ---- .* ----$' "$root/tests/run.sh" | sed -E 's/^# ---- (.*) ----$/\1/')
+if [[ -z $index_missing ]]; then
+  report "index: every section of this file is listed at the top" ok
+else
+  report "index: every section of this file is listed at the top" fail "not in the index:$index_missing"
 fi
 
 echo "$passed passed, $failed failed"
