@@ -1976,6 +1976,14 @@ else
   report "skills/create-pr alert to-dos are a closing message, not a one-option dialog" fail "the gate text is left or the closing message is missing"
 fi
 
+# Steps 4 to 6 stay silent: label problems become notes in the preview, and the deployment conflict blocks Step 8
+if ! grep -qE 'warn the author|warn and ask' "$create_skill" && grep -qF 'Label `<name>` does not exist, dropped.' "$create_skill" &&
+  grep -qF 'This blocks Step 8 until the author has resolved it' "$create_skill"; then
+  report "skills/create-pr Step 4 asks nothing: notes for the preview, the conflict blocks Step 8" ok
+else
+  report "skills/create-pr Step 4 asks nothing: notes for the preview, the conflict blocks Step 8" fail "an ask in Step 4 is left or a note or the block is missing"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do

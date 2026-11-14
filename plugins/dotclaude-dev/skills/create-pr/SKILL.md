@@ -182,12 +182,14 @@ Whenever a label is set or changed (initial inference, or a correction made in t
 jq --arg name "<label-name>" 'any(.[]; .name == $name)' <pr-dir>/labels.json
 ```
 
-`true` → the name matches an existing label, proceed. `false` → warn the author and ask them to correct it or drop it — don't pass unknown label names to `gh pr create`.
+`true` → the name matches an existing label, proceed. `false` → do not ask: leave the label out of `<selected-labels>` and keep the note "Label `<name>` does not exist, dropped." for the Step 7 preview. Never pass an unknown label name to `gh pr create`.
 
 **Enforcement** (standard mode only):
 
-- If no `type:` label was selected, warn the author but do not block — labels can be adjusted on the PR afterward.
-- `type: deployment` cannot be combined with any other `type:` label. If selected alongside another type, warn and ask the author to resolve the conflict before proceeding.
+- If no `type:` label was selected, keep the note "No `type:` label selected." for the Step 7 preview. This does not block — labels can be adjusted on the PR afterward.
+- `type: deployment` cannot be combined with any other `type:` label. If both are selected, keep the selection and the note "Conflict: `type: deployment` cannot be combined with `<other label>`." for the Step 7 preview. This blocks Step 8 until the author has resolved it in the loop.
+
+Steps 4 to 6 ask nothing: every note is shown in the Step 7 preview and corrected there.
 
 Store the final label set as `<selected-labels>`.
 
@@ -260,7 +262,7 @@ Default `<draft-state>` to "ready for review".
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. Show the notes kept in Step 4 as well (a dropped label, a missing `type:` label, a `type: deployment` conflict). If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
 
 Ask with `AskUserQuestion`:
 
@@ -275,7 +277,7 @@ Loop has no fixed iteration cap — repeat until the author chooses "Looks good,
 
 ### Step 8 — Create PR
 
-`<title>` is empty → write nothing: go back to the loop above and ask for the title under "Change something else".
+`<title>` is empty, or the `type: deployment` conflict of Step 4 is unresolved → write nothing: go back to the loop above and ask for the title or the labels under "Change title or labels".
 
 Write `<title>` as plain text to `<pr-dir>/title.txt` and `<body>` to `<pr-dir>/body.txt` with the Write tool, exactly as shown in the preview. Never put title or body into a shell command: both contain backticks, which the shell would run.
 
