@@ -1,12 +1,12 @@
 ---
 name: doctor
-description: Use when setting up or troubleshooting the dotclaude-dev plugin. Checks that the prerequisite plugins, the CLI tools git, gh and jq and the environment variables are in place, and offers to install missing plugins. Run it by hand; nothing changes without confirmation.
+description: Use when setting up or troubleshooting the dotclaude-dev plugin. Checks that the prerequisite plugins, the CLI tools git, gh and jq, the GitHub login and the environment variables are in place, and offers to install missing plugins. Run it by hand; nothing changes without confirmation.
 disable-model-invocation: true
 ---
 
 # doctor
 
-Checks the local Claude Code environment: required plugins, CLI tools, environment variables. Read-only and safe to repeat. Plugins are fixed only with confirmation; CLI tools and env vars are report-only, never fixed.
+Checks the local Claude Code environment: required plugins, CLI tools, the GitHub login, environment variables. It reads first and changes nothing without your confirmation, so it is safe to repeat. Plugins are fixed only with confirmation; CLI tools, the login and env vars are report-only, never fixed.
 
 Three passes, run in order, never interleaved: **Check** (Step 1) → **Fix** (Step 2) → **Report** (Step 3). Every check runs to completion regardless of earlier results.
 
@@ -16,7 +16,7 @@ Each invocation is independent: re-run every Step 1 check live, even if this ski
 
 Run every check below and store each result before moving to Step 2. No fixing yet, no output yet.
 
-**Plugins** — run `claude plugin list --json` once and reuse its output for every plugin below (never once per plugin). It returns a JSON array of objects with an `id` and a boolean `enabled`. Look up each `id`: absent → `missing`; present with `enabled: true` → `enabled`; present with `enabled: false` → `disabled`.
+**Plugins** — run `claude plugin list --json` once and reuse its output for every plugin below (never once per plugin). If the command fails or its output is not a JSON array, every plugin gets the status `unknown`: nothing is fixed in Step 2, and Step 3 reports "Could not read the plugin list" followed by the first line of its stderr. Otherwise it returns a JSON array of entries with an `id`, a `scope` and a boolean `enabled`. Look up each `id`: no entry → `missing`; one entry → `enabled` or `disabled` by its `enabled` field; several entries for the same `id` (one per scope) → the entry with the narrowest scope decides: managed, then local, then project, then user.
 
 | Plugin | Category |
 | --- | --- |
@@ -36,11 +36,23 @@ Run every check below and store each result before moving to Step 2. No fixing y
 | `gh` |
 | `jq` |
 
+**GitHub login** — the check `preflight.sh` makes, in the current directory. It runs only inside a git repository that has a remote `origin`; elsewhere, or when `gh` is missing, the status is `not-checked`. Take the host from the second printed line:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remote-host.sh" origin
+```
+
+```bash
+gh api user --hostname "<host>" --jq '.login'
+```
+
+Success → `logged-in` (keep the login); non-zero exit → `not-logged-in`; the first command fails → `not-checked`.
+
 **Environment variables** — none currently required. Add rows here (checked with `[ -n "${VAR:-}" ]`, always optional) when a shipped skill hard-gates on one.
 
 ## Step 2 — Fix pass (ask-first)
 
-Act on the statuses stored in Step 1 — never re-run a check here. Plugins with status `disabled` or `missing` need a fix; `dotclaude-dev` is excluded entirely. CLI tools and environment variables are never fixed, only reported. If nothing needs a fix, skip this step.
+Act on the statuses stored in Step 1 — never re-run a check here. Plugins with status `disabled` or `missing` need a fix; a plugin with status `unknown` is never fixed. CLI tools, the GitHub login and environment variables are never fixed, only reported. If nothing needs a fix, skip this step.
 
 Ask in two rounds, mandatory plugins first, then optional — one `AskUserQuestion` call per round, one question per plugin. Skip a round whose category has nothing to fix. `AskUserQuestion` accepts at most 4 questions, so split a category with more than 4 into successive calls.
 
@@ -51,15 +63,15 @@ Then, for each confirmed plugin, run via the Bash tool — always with `--json`,
 - `missing` → `claude plugin install <plugin> --yes --json`
 - `disabled` → `claude plugin enable <plugin> --json`
 
-Ignore the exit code; it is unreliable for both commands. Parse the JSON's `outcome` field instead: `"ok"` records `fixed`, anything else records `fix-failed` and surfaces the JSON's `message` verbatim. A plugin left unconfirmed records `skipped` and runs no command.
+Ignore the exit code; it is unreliable for both commands. Parse the JSON's `outcome` field instead: `"ok"` records `fixed`, anything else records `fix-failed` and surfaces the JSON's `message` verbatim. When that message says the marketplace is unknown or not found, add one hint: the marketplace of the plugin must be added first (`/plugin marketplace add`). A plugin left unconfirmed records `skipped` and runs no command.
 
 ## Step 3 — Report pass
 
-Render exactly once, after Steps 1 and 2 are both complete. One line per check, grouped by category, with ✔/✘ markers.
+Render exactly once, after Steps 1 and 2 are both complete.
 
-An item passes when: `dotclaude-dev` — always; a mandatory plugin — Step 1 said `enabled`, or Step 2 recorded `fixed`; a CLI tool — `present`. Optional plugins and env vars never affect the overall pass, but a non-clean state is always surfaced.
+An item passes when: a mandatory plugin — Step 1 said `enabled`, or Step 2 recorded `fixed`; a CLI tool — `present`; the GitHub login — `logged-in` or `not-checked`. Optional plugins and env vars never affect the overall pass, but a non-clean state is always surfaced.
 
-If every mandatory plugin, `dotclaude-dev`, and every CLI tool pass, print:
+If every mandatory plugin, every CLI tool and the GitHub login pass, print:
 
 > "All mandatory prerequisites for using the dotclaude-dev plugin are set up."
 
@@ -69,8 +81,10 @@ followed — only when an optional plugin or env var is not clean (`disabled`/`m
 >
 > - `<plugin-or-var>` — `<state>`
 
-Omit that block entirely when every optional item is clean. Otherwise, show the full itemized breakdown across all categories, including any `fix-failed` message from Step 2.
+Omit that block entirely when every optional item is clean. When the GitHub login was `not-checked`, add one line below: "GitHub login not checked: run the doctor inside a repository that has an `origin` remote."
+
+Otherwise, show the full itemized breakdown: one line per check, grouped by category, with ✔/✘ markers, including any `fix-failed` message from Step 2 and the "Could not read the plugin list" message when the plugin list was `unknown`.
 
 ## Maintenance
 
-The lists above are hardcoded here — no external config, no discovery from other skills. When a new skill needs a CLI tool or environment variable, or your plugin habits change, edit the tables by hand and put anything belonging to an optional skill in the optional category.
+The lists above are hardcoded here — no external config, no discovery from other skills. When a new skill needs a CLI tool or environment variable, edit the tables by hand and put anything belonging to an optional skill in the optional category.

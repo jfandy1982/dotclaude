@@ -2066,6 +2066,49 @@ else
   report "skills/create-pr and doctor: checklist state, folder inventory, deletion row, descriptions" fail "a state variable, the inventory, the deletion row or a description sentence is missing, or the limit note is left"
 fi
 
+# doctor: unreadable plugin list, narrowest scope wins, GitHub login with the check preflight makes, honest intro, one self sentence
+if grep -qF 'every plugin gets the status `unknown`' "$doctor_skill" && grep -qF 'the entry with the narrowest scope decides: managed, then local, then project, then user' "$doctor_skill" &&
+  grep -qF 'scripts/remote-host.sh" origin' "$doctor_skill" && grep -qF 'gh api user --hostname "<host>"' "$doctor_skill" &&
+  grep -qF 'changes nothing without your confirmation' "$doctor_skill" && ! grep -qF 'Read-only and safe to repeat' "$doctor_skill" &&
+  [[ $(grep -c 'dotclaude-dev` can only ever resolve' "$doctor_skill") -eq 1 ]] && ! grep -qF 'your plugin habits' "$doctor_skill"; then
+  report "skills/doctor: unknown list, scope rule, login check, honest intro, one self sentence" ok
+else
+  report "skills/doctor: unknown list, scope rule, login check, honest intro, one self sentence" fail "a rule sentence is missing or an old phrase is left"
+fi
+
+# the plugin README is the one home of the operational facts and lists every skill
+plugin_readme="$root/plugins/dotclaude-dev/README.md"
+readme_ok=yes
+for needed in '## Installation' '/plugin install dotclaude-dev@jfandy1982-dotclaude' '## Skills' '## How the skills run' '### Temporary files' '## Prerequisites' '### Tool versions' '## Known limitations' 'disable-model-invocation: true' 'The scripts never delete anything' '`doctor`' '`create-pr`' '`review-pr`'; do
+  grep -qF -- "$needed" "$plugin_readme" || { readme_ok=no; readme_missing=$needed; }
+done
+for skill_dir in "$root"/plugins/dotclaude-dev/skills/*/; do
+  grep -qF "\`$(basename "$skill_dir")\`" "$plugin_readme" || { readme_ok=no; readme_missing="skill $(basename "$skill_dir")"; }
+done
+if [[ -f $plugin_readme && $readme_ok == yes ]]; then
+  report "plugin README: sections for skills, running, temp files, prerequisites, versions, limitations" ok
+else
+  report "plugin README: sections for skills, running, temp files, prerequisites, versions, limitations" fail "missing: ${readme_missing:-the file}"
+fi
+
+# the root README points to the plugin README and its plugin heading is the marketplace description
+marketplace_description=$(jq -r '.plugins[] | select(.name == "dotclaude-dev") | .description' "$root/.claude-plugin/marketplace.json")
+if grep -qF '](plugins/dotclaude-dev/README.md)' "$root/README.md" && grep -qxF "### dotclaude-dev — $marketplace_description" "$root/README.md" &&
+  [[ $(wc -w < "$root/README.md") -ge 40 ]]; then
+  report "root README: points to the plugin README, heading matches the marketplace, at least 40 words" ok
+else
+  report "root README: points to the plugin README, heading matches the marketplace, at least 40 words" fail "link, heading or word count is wrong"
+fi
+
+# the manifest names the author like the marketplace owner, and the manifest description equals the marketplace entry
+manifest="$root/plugins/dotclaude-dev/.claude-plugin/plugin.json"
+if [[ $(jq -r '.author.name' "$manifest") == "$(jq -r '.owner.name' "$root/.claude-plugin/marketplace.json")" ]] &&
+  [[ $(jq -r '.description' "$manifest") == "$marketplace_description" ]]; then
+  report "plugin.json: author is the marketplace owner, description equals the marketplace entry" ok
+else
+  report "plugin.json: author is the marketplace owner, description equals the marketplace entry" fail "author or description differs"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do
