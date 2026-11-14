@@ -1215,7 +1215,7 @@ run_plain "$bc_script"
 expect_error "pr-body-check/usage: no arguments" 2 usage false
 
 # a table of about 150 KB (1500 changed files): one jq argument is limited to 128 KB on Linux, so it must be read from a file
-bc_big=$(jq -nc '[range(1500) | {path: ("dir/" + ("x" * 100) + (. | tostring))}]')
+bc_big=$(jq -nc '[range(1500) | {path: ("dir/" + ("x" * 100) + @text)}]')
 bc_run "$bc_big" << 'EOF'
 ## File risk
 
