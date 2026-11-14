@@ -18,6 +18,8 @@ SEED_PR_JSON=""
 # The fake gh replaces the real one in every bash process started below
 source "$root/tests/stub/gh.sh"
 export -f gh
+source "$root/tests/stub/git.sh"
+export -f git
 
 # report <name> <ok|fail> [detail]
 report() {
@@ -1334,6 +1336,28 @@ pf_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
 git -C "$pf_repo" init -q
 git -C "$pf_repo" remote add origin https://github.example.local/o/r.git
 
+# pf_branch_repo <branch> [no-upstream]: a repository for create-pr on that branch; the upstream is origin/<branch>, already fetched
+pf_branch_repo() {
+  local branch=$1 dir
+  dir=$(mktemp -d "$tmp/pf-repo-XXXXXX")
+  git -C "$dir" init -q
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$branch"
+  git -C "$dir" config user.name tester
+  git -C "$dir" config user.email tester@example.com
+  git -C "$dir" remote add origin https://github.example.local/o/r.git
+  echo a > "$dir/a.txt"
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m A
+  if [[ ${2:-} != no-upstream ]]; then
+    git -C "$dir" config "branch.$branch.remote" origin
+    git -C "$dir" config "branch.$branch.merge" "refs/heads/$branch"
+    git -C "$dir" update-ref "refs/remotes/origin/$branch" HEAD
+  fi
+  printf '%s\n' "$dir"
+  return 0
+}
+pf_cp_repo=$(pf_branch_repo feat)
+
 # pf_stub: the fake gh answers the login and the repository
 pf_stub() {
   local dir
@@ -1344,11 +1368,13 @@ pf_stub() {
   return 0
 }
 
-# pf_run <stub-dir> <tmp-dir> <arguments...>: runs preflight.sh in the repository with the fake gh and its own TMPDIR
+# pf_run <stub-dir> <tmp-dir> <arguments...>: runs preflight.sh with the fake gh and its own TMPDIR, in the branch repository for create-pr
+# (PF_REPO overrides it) and in the plain one for review-pr; the fetch of the branch check is skipped
 pf_run() {
-  local stub=$1 work_dir=$2
+  local stub=$1 work_dir=$2 repo=$pf_repo
   shift 2
-  STUB_GH_DIR="$stub" TMPDIR="$work_dir" PLAIN_DIR="$pf_repo" run_plain "$preflight_script" "$@"
+  [[ ${1:-} != create-pr ]] || repo=$pf_cp_repo
+  STUB_GIT_FETCH=skip STUB_GH_DIR="$stub" TMPDIR="$work_dir" PLAIN_DIR="${PF_REPO:-$repo}" run_plain "$preflight_script" "$@"
   return 0
 }
 
@@ -1366,9 +1392,9 @@ expect_no_pr_folder() {
 
 pf_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
 stub=$(pf_stub)
-pf_run "$stub" "$pf_tmp" create-pr origin
+pf_run "$stub" "$pf_tmp" create-pr
 pf_dir=$(jq -r '.prDir' "$tmp/data.out")
-if [[ $DATA_CODE -eq 0 ]] && jq -e --arg dir "$pf_dir" '. == {skill: "create-pr", remote: "origin", remoteUrl: "https://github.example.local/o/r.git", host: "github.example.local", username: "reviewer1", repoUrl: "https://github.example.local/o/r", repoPath: "o/r", defaultBranch: "main", prDir: $dir}' "$tmp/data.out" > /dev/null; then
+if [[ $DATA_CODE -eq 0 ]] && jq -e --arg dir "$pf_dir" '. == {skill: "create-pr", remote: "origin", remoteUrl: "https://github.example.local/o/r.git", host: "github.example.local", username: "reviewer1", repoUrl: "https://github.example.local/o/r", repoPath: "o/r", defaultBranch: "main", prDir: $dir, branch: "feat", remoteBranch: "feat"}' "$tmp/data.out" > /dev/null; then
   report "preflight/create-pr: the printed JSON" ok
 else
   report "preflight/create-pr: the printed JSON" fail "exit $DATA_CODE: $(cat "$tmp/data.out") $(cat "$tmp/data.err")"
@@ -1381,18 +1407,18 @@ expect_call "preflight/create-pr: login is read on the host of the remote" "$stu
 expect_call "preflight/create-pr: the repository is read from the remote URL" "$stub" "repo view https://github.example.local/o/r.git"
 
 pf_run "$stub" "$pf_tmp" review-pr origin
-jq -e '.skill == "review-pr" and (.prDir | test("/review-pr-[A-Za-z0-9]+$"))' "$tmp/data.out" > /dev/null &&
+jq -e '.skill == "review-pr" and (.prDir | test("/review-pr-[A-Za-z0-9]+$")) and (has("branch") | not) and (has("remoteBranch") | not)' "$tmp/data.out" > /dev/null &&
   report "preflight/review-pr: folder prefix and skill" ok ||
   report "preflight/review-pr: folder prefix and skill" fail "$(cat "$tmp/data.out") $(cat "$tmp/data.err")"
 
 # every failure leaves no folder behind and names the skill in the hint
 pf_case_tmp=$(mktemp -d "$tmp/pf-case-XXXXXX")
-PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr origin
+PLAIN_DIR="$rg_bare" TMPDIR="$pf_case_tmp" run_plain "$preflight_script" create-pr
 expect_error "preflight/outside a repository" 1 other false
 expect_error_message "preflight/outside a repository, hint names the skill" '`/create-pr`'
 expect_no_pr_folder "preflight/outside a repository makes no folder" "$pf_case_tmp"
 
-pf_run "$stub" "$pf_case_tmp" create-pr nowhere
+pf_run "$stub" "$pf_case_tmp" review-pr nowhere
 expect_error "preflight/unknown remote" 1 other false
 expect_error_message "preflight/unknown remote, message" "No remote named nowhere"
 expect_no_pr_folder "preflight/unknown remote makes no folder" "$pf_case_tmp"
@@ -1406,13 +1432,13 @@ expect_no_pr_folder "preflight/auth failure makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository with the name 'o/r'."
-pf_run "$stub" "$pf_case_tmp" create-pr origin
+pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error "preflight/repository not found" 11 not_found false
 expect_no_pr_folder "preflight/repository not found makes no folder" "$pf_case_tmp"
 
 stub=$(pf_stub)
 echo '{"url":"https://github.example.local/o/r","nameWithOwner":"o/r","defaultBranchRef":null}' > "$stub/repo-view.out"
-pf_run "$stub" "$pf_case_tmp" create-pr origin
+pf_run "$stub" "$pf_case_tmp" create-pr
 expect_error "preflight/repository without a default branch" 1 other false
 expect_error_message "preflight/repository without a default branch, message" "no default branch"
 expect_no_pr_folder "preflight/repository without a default branch makes no folder" "$pf_case_tmp"
@@ -1420,19 +1446,39 @@ expect_no_pr_folder "preflight/repository without a default branch makes no fold
 stub=$(pf_stub)
 pf_blocked=$(mktemp -d "$tmp/pf-blocked-XXXXXX")
 : > "$pf_blocked/dotclaude-dev"
-pf_run "$stub" "$pf_blocked" create-pr origin
+pf_run "$stub" "$pf_blocked" create-pr
 expect_error "preflight/temporary folder cannot be created" 1 other false
 expect_error_message "preflight/temporary folder cannot be created, message" "temporary folder"
 
 pf_run "$stub" "$pf_case_tmp" other-skill origin
 expect_error "preflight/usage: unknown skill" 2 usage false
-pf_run "$stub" "$pf_case_tmp" create-pr
-expect_error "preflight/usage: one argument" 2 usage false
-pf_run "$stub" "$pf_case_tmp" create-pr origin extra
+pf_run "$stub" "$pf_case_tmp" review-pr
+expect_error "preflight/usage: review-pr without a remote" 2 usage false
+pf_run "$stub" "$pf_case_tmp" create-pr origin
+expect_error "preflight/usage: create-pr finds its remote itself" 2 usage false
+pf_run "$stub" "$pf_case_tmp" review-pr origin extra
 expect_error "preflight/usage: three arguments" 2 usage false
 expect_error_message "preflight/usage: the message names the script and its arguments, nothing else" \
-  "Wrong arguments. Usage: preflight.sh <skill> <remote>, see the header of the script."
+  "Wrong arguments. Usage: preflight.sh create-pr | review-pr <remote>, see the header of the script."
 expect_no_pr_folder "preflight/usage errors make no folder" "$pf_case_tmp"
+
+# create-pr: the branch checks come first, so a failure makes no gh call and no folder
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo loose no-upstream) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error "preflight/create-pr: a branch without upstream" 1 other false
+expect_error_message "preflight/create-pr: a branch without upstream, message" "has no remote tracking branch"
+expect_error_message "preflight/create-pr: a branch without upstream, hint names the skill" '`/create-pr`'
+expect_no_pr_folder "preflight/create-pr: a branch without upstream makes no folder" "$pf_case_tmp"
+[[ ! -f $stub/calls.log ]] && report "preflight/create-pr: a branch without upstream makes no gh call" ok ||
+  report "preflight/create-pr: a branch without upstream makes no gh call" fail "$(cat "$stub/calls.log")"
+
+# create-pr on the default branch: the guard needs the default branch from gh, still no folder
+stub=$(pf_stub)
+PF_REPO=$(pf_branch_repo main) pf_run "$stub" "$pf_case_tmp" create-pr
+expect_error "preflight/create-pr: on the default branch" 1 other false
+expect_error_message "preflight/create-pr: on the default branch, message" "Branch main is the default branch"
+expect_error_message "preflight/create-pr: on the default branch, hint names the skill" '`/create-pr`'
+expect_no_pr_folder "preflight/create-pr: on the default branch makes no folder" "$pf_case_tmp"
 
 # a password in the remote URL reaches neither the printed JSON, preflight.json, the gh call nor an error line
 pf_cred_repo=$(mktemp -d "$tmp/pf-repo-XXXXXX")
@@ -1440,7 +1486,7 @@ git -C "$pf_cred_repo" init -q
 git -C "$pf_cred_repo" remote add origin https://user:SECRET@github.example.local/o/r.git
 pf_cred_tmp=$(mktemp -d "$tmp/pf-tmp-XXXXXX")
 stub=$(pf_stub)
-STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
+STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" review-pr origin
 pf_dir=$(jq -r '.prDir' "$tmp/data.out")
 if [[ $DATA_CODE -eq 0 ]] && ! grep -rq SECRET "$tmp/data.out" "$tmp/data.err" "$pf_dir" "$stub/calls.log" &&
   jq -e '.remoteUrl == "https://github.example.local/o/r.git"' "$pf_dir/preflight.json" > /dev/null; then
@@ -1451,7 +1497,7 @@ fi
 stub=$(new_stub)
 echo reviewer1 > "$stub/api-user.out"
 fail_stub "$stub" repo-view 1 "GraphQL: Could not resolve to a Repository (repository)"
-STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" create-pr origin
+STUB_GH_DIR="$stub" TMPDIR="$pf_cred_tmp" PLAIN_DIR="$pf_cred_repo" run_plain "$preflight_script" review-pr origin
 if [[ $DATA_CODE -eq 11 ]] && ! grep -q SECRET "$tmp/data.err"; then
   report "preflight/a password in the remote URL is dropped from the error line" ok
 else
