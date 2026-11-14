@@ -9,13 +9,18 @@
 #       prints the open PRs of this repository whose head is the branch name on the remote (remoteBranch of
 #       <pr-dir>/preflight.json, written by preflight.sh create-pr): [{number, title, url}]. A PR from a fork that
 #       happens to use the same head name does not count.
-#   pr-create.sh create <pr-dir> <yes|no> [<label>...]
-#       reads <pr-dir>/title.txt and <pr-dir>/body.txt, runs gh pr create (yes = draft), prints the PR URL
+#   pr-create.sh check-labels <pr-dir>
+#       reads the label names (one per line) from <pr-dir>/labels.txt and prints {unknown: [...]}: the names that
+#       <pr-dir>/labels.json does not have. A label name is never typed into a command: GitHub allows any character in it.
+#   pr-create.sh create <pr-dir> <yes|no>
+#       reads <pr-dir>/title.txt, <pr-dir>/body.txt and the labels from <pr-dir>/labels.txt (none when the file is
+#       missing or empty; a name that labels.json does not have stops the run), runs gh pr create (yes = draft),
+#       prints the PR URL
 # Portable to bash 3.2 and BSD tools (macOS): no GNU-only options.
 set -u -o pipefail
 
 SCRIPT="pr-create.sh"
-SUBCOMMANDS='labels|list-open-prs|create'
+SUBCOMMANDS='labels|list-open-prs|check-labels|create'
 # shellcheck source=contract.sh
 source "$(dirname "${BASH_SOURCE[0]}")/contract.sh"
 
@@ -45,10 +50,27 @@ cmd_list_open_prs() {
   return 0
 }
 
+# unknown_labels <dir>: prints the names in <dir>/labels.txt that <dir>/labels.json lacks, as a JSON array
+unknown_labels() {
+  local dir=$1
+  [[ -f $dir/labels.json ]] || die "labels.json" "Folder $dir has no labels.json. Run pr-create.sh labels first."
+  jq -Rnc --slurpfile all "$dir/labels.json" \
+    '[inputs | select(length > 0)] | map(select(. as $name | ($all[0] | any(.name == $name)) | not))' "$dir/labels.txt" 2> /dev/null ||
+    die "labels.txt" "Cannot read the labels in $dir/labels.txt."
+  return 0
+}
+
+cmd_check_labels() {
+  local dir=$1 unknown
+  [[ -f $dir/labels.txt ]] || die "labels.txt" "Folder $dir has no labels.txt. Write the labels first."
+  unknown=$(unknown_labels "$dir") || exit $?
+  jq -nc --argjson unknown "$unknown" '{unknown: $unknown}'
+  return 0
+}
+
 cmd_create() {
-  local dir=$1 draft=$2 title label
+  local dir=$1 draft=$2 title label unknown
   local -a args
-  shift 2
   [[ $draft == yes || $draft == no ]] || usage
   load_preflight "$dir"
   VERB=create
@@ -58,9 +80,13 @@ cmd_create() {
   [[ -n $title ]] || die "title" "The title in $dir/title.txt is empty."
   args=(pr create --repo "$REPO_URL" --assignee @me --title "$title" --body-file "$dir/body.txt")
   [[ $draft == no ]] || args+=(--draft)
-  for label in "$@"; do
-    args+=(--label "$label")
-  done
+  if [[ -s $dir/labels.txt ]]; then
+    unknown=$(unknown_labels "$dir") || exit $?
+    [[ $unknown == '[]' ]] || die "labels" "These labels are not in $dir/labels.json: $unknown. Correct the labels first."
+    while IFS= read -r label; do
+      [[ -z $label ]] || args+=(--label "$label")
+    done < "$dir/labels.txt"
+  fi
   run_gh "the PR" "${args[@]}"
   printf '%s\n' "$OUT"
   return 0
@@ -72,7 +98,8 @@ main() {
   case $cmd in
     labels) [[ $# -eq 1 ]] || usage; cmd_labels "$@" ;;
     list-open-prs) [[ $# -eq 1 ]] || usage; cmd_list_open_prs "$@" ;;
-    create) [[ $# -ge 2 ]] || usage; cmd_create "$@" ;;
+    check-labels) [[ $# -eq 1 ]] || usage; cmd_check_labels "$@" ;;
+    create) [[ $# -eq 2 ]] || usage; cmd_create "$@" ;;
     *) usage ;;
   esac
   return $?

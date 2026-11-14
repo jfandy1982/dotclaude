@@ -32,7 +32,7 @@ require_pr_json() {
 }
 
 cmd_pr() {
-  local pr_arg=$1 dir=$2 json body repo_path number base
+  local pr_arg=$1 dir=$2 json body repo_path number base pr_host
   # only a number or a URL: anything else (--web, a branch name, #42) would reach gh as a flag or a different lookup
   [[ $pr_arg =~ ^[0-9]+$ || $pr_arg =~ ^https?:// ]] || usage
   load_preflight "$dir"
@@ -44,13 +44,18 @@ cmd_pr() {
     die "PR $pr_arg" "Cannot read the PR URL returned by gh."
   [[ -n $repo_path ]] || die "PR $pr_arg" "Cannot read the PR URL returned by gh."
   number=$(printf '%s' "$json" | jq -r '.number' 2> /dev/null) || die "PR $pr_arg" "Cannot read the PR number returned by gh."
-  run_gh "base commit of PR #$number" api --hostname "$HOST" "repos/$repo_path/pulls/$number"
-  base=$(printf '%s' "$OUT" | jq -r '.base.sha // empty' 2> /dev/null) || die "PR $pr_arg" "Cannot read the base commit returned by gh."
-  [[ -n $base ]] || die "PR $pr_arg" "Cannot read the base commit returned by gh."
+  # a PR on another host than origin is out of scope (sameRepo is false): asking this host for it would only give a misleading not found
+  pr_host=$(printf '%s' "$json" | jq -r '.url | capture("^https://(?<host>[^/]+)/").host' 2> /dev/null) || die "PR $pr_arg" "Cannot read the PR URL returned by gh."
+  base=""
+  if [[ $(printf '%s' "$pr_host" | tr '[:upper:]' '[:lower:]') == "$(printf '%s' "$HOST" | tr '[:upper:]' '[:lower:]')" ]]; then
+    run_gh "base commit of PR #$number" api --hostname "$HOST" "repos/$repo_path/pulls/$number"
+    base=$(printf '%s' "$OUT" | jq -r '.base.sha // empty' 2> /dev/null) || die "PR $pr_arg" "Cannot read the base commit returned by gh."
+    [[ -n $base ]] || die "PR $pr_arg" "Cannot read the base commit returned by gh."
+  fi
   json=$(printf '%s' "$json" | jq --arg repo "$REPO_URL" --arg base "$base" '. + {
     sameRepo:     ((.url | ascii_downcase) | startswith(($repo + "/pull/") | ascii_downcase)),
     isDeployment: any(.labels[]; .name == "type: deployment"),
-    baseRefOid:   $base
+    baseRefOid:   (if $base == "" then null else $base end)
   }' 2> /dev/null) || die "PR $pr_arg" "Cannot read the PR data returned by gh."
   body=$(printf '%s' "$json" | jq -r '.body // ""' 2> /dev/null) || die "PR $pr_arg" "Cannot read the PR body returned by gh."
   write_file "$dir" pr.json "$json"
