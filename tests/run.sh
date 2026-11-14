@@ -2056,6 +2056,16 @@ else
   report "skills: duplicated rules have one home and the other place points to it" fail "a pointer is missing or a rule is still written twice"
 fi
 
+# the checklist state is stored, the maintainer note and the folder gaps are fixed, the descriptions say what the skills do
+doctor_skill="$root/plugins/dotclaude-dev/skills/doctor/SKILL.md"
+if grep -qF 'Store `state` as `<checklist-state>`' "$create_skill" && grep -qF 'If `<checklist-state>` is `unusable`' "$create_skill" && ! grep -qF -e '--limit 50' "$create_skill" &&
+  grep -qF 'The folder holds `preflight.json` and later `diff/`' "$create_skill" && grep -qF 'the deletion of a file of one of these kinds' "$create_skill" &&
+  grep -qF 'Updating an existing PR is not supported yet.' "$create_skill" && grep -qF 'the CLI tools git, gh and jq' "$doctor_skill"; then
+  report "skills/create-pr and doctor: checklist state, folder inventory, deletion row, descriptions" ok
+else
+  report "skills/create-pr and doctor: checklist state, folder inventory, deletion row, descriptions" fail "a state variable, the inventory, the deletion row or a description sentence is missing, or the limit note is left"
+fi
+
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
 
 for skill in create-pr review-pr doctor; do

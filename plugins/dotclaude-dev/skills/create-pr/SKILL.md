@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Use when creating a pull request for the current branch, which is already committed and pushed.
+description: Use when creating a pull request for the current branch, which is already committed and pushed. Asks for linked issues and CodeQL alerts, infers labels, title and body with a per-file risk section from the diff, shows one preview and creates the PR with gh. Updating an existing PR is not supported yet.
 disable-model-invocation: true
 compatibility: Requires git, gh CLI, jq and internet access to GitHub
 argument-hint: '[--issue numbers-or-na] [--alert numbers-or-na]'
@@ -45,7 +45,7 @@ Non-zero exit → stop with the `message` of the JSON line the script wrote to s
 
 The script prints one JSON line. Store `branch` as `<branch>`, `remote` as `<remote>`, `defaultBranch` as `<default-branch>` and `prDir` as `<pr-dir>`. Host, repository URL and path, the login and the branch name on the remote stay in `<pr-dir>/preflight.json`, where the scripts read them: do not copy them into later commands. Do not delete the folder.
 
-The folder later holds `diff/` (one diff file per changed file), `file-table.json`, `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
+The folder holds `preflight.json` and later `diff/` (one diff file per changed file), `changed-files.list`, `file-table.json`, `labels.json`, `issue-<number>.json`, `alert-<number>.json`, `title.txt` and `body.txt`. A missing file means that part was not collected. A run reads only files it created itself: every run starts a new folder and fetches everything again.
 
 Every stored value is reused in later steps; never re-run a command whose result is stored.
 
@@ -94,11 +94,13 @@ Read `<branch>` (from Precondition 2), the commit messages, `<file-table>`, and 
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-checklist.sh" "<remote>" "<default-branch>"
 ```
 
-It prints one JSON line `{state, items}`:
+It prints one JSON line `{state, items}`. Store `state` as `<checklist-state>`:
 
-- `none` (no `CLAUDE.md` in the repository root, or no `### PR merge checklist` heading) → no checklist. Continue silently.
-- `unusable` (heading found, but no table, or the table lacks a `File pattern` or `Checklist item` column) → `<pr-checklist>` stays empty for this run, and note that the heading was found but unusable. Don't warn here — this is surfaced in the Step 7 combined preview instead, the same place missing/invalid results from other steps are already surfaced and corrected. (This differs from `none`: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common, unremarkable case.)
+- `none` (no `CLAUDE.md` in the repository root, or no `### PR merge checklist` heading) → `<pr-checklist>` stays empty. This is the common case: continue silently.
+- `unusable` (heading found, but no table, or the table lacks a `File pattern` or `Checklist item` column) → `<pr-checklist>` stays empty for this run. Add the note "The repository's `CLAUDE.md` has a PR merge checklist heading, but its table could not be read; no checklist section was added." for the Step 7 preview.
 - `ok` → store `items` (the matching rows' items, in table order, duplicates collapsed) as `<pr-checklist>`. An empty list is the common case and is not itself a warning.
+
+`unusable` differs from `none` on purpose: writing the heading is a deliberate signal of intent, so a broken table under it is worth mentioning, while simply not having the heading is the common case.
 
 The script's answer is final: do not read `CLAUDE.md` or match patterns yourself.
 
@@ -132,9 +134,7 @@ Otherwise, ask with `AskUserQuestion` to show a confirmation listing each issue 
   - "Use these issues" (Recommended) — preview: each issue number with its fetched title
   - "Edit" — author revises the issue number list via a follow-up plain text prompt; check and clean the new list as above, run the command for each new number and apply the checks above
 
-Format as individual `Closes #N` lines.
-
-Store the result as `<closes>`. Read the file `<pr-dir>/issue-<N>.json` of every kept issue once and keep its title, full body and labels as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1. Step 7 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
+Store the result as `<closes>`, one `Closes #N` line per kept issue. Read the file `<pr-dir>/issue-<N>.json` of every kept issue once and keep its title, full body and labels as `<issue-context>`. Subsequent steps (file risk, label inference, PR title, body) all use `<issue-context>` as additional signal alongside the branch context from Step 1. Step 7 is responsible for summarizing the issue body down to what's needed for the Why section — `<issue-context>` itself stores the full body, not a pre-truncated version.
 
 ### Step 3 — CodeQL alert linking
 
@@ -172,7 +172,7 @@ There is no `Closes`-equivalent syntax for alerts — GitHub links a fixing bran
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh" labels "<pr-dir>"
 ```
 
-The script writes the labels that may be chosen to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each of them. Store the printed `labels` — reuse in Step 5 (file risk). `--limit 50` in the script is deliberate: the target repos have about 25 labels. Raise it if a repo ever exceeds 50, since labels beyond the limit would fail the verification below.
+The script writes the labels that may be chosen to `<pr-dir>/labels.json` and prints `{mode, labels}` with name and description of each of them. Store the printed `labels` — reuse in Step 5 (file risk).
 
 **Taxonomy detection** is done by the script:
 
@@ -184,6 +184,8 @@ The script writes the labels that may be chosen to `<pr-dir>/labels.json` and pr
 From the branch context gathered in Step 1 (changed files, diff content), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3, infer a suggested `aspect:` label. Signal: changed files and diff content, weighed against the fetched label descriptions (Step 4) for topic/area match — e.g. changes concentrated in UI components/templates suggest `aspect: ui`, changes to CLI/API surface suggest `aspect: api`, changes to repo tooling/config suggest `aspect: repo`; a linked CodeQL alert's flagged file path reinforces this same matching (e.g. an alert flagging an auth file alongside a `security` aspect label). No inference is attempted from branch name — too context-dependent to guess reliably. If no clear signal, no `aspect:` label is inferred.
 
 A `type:` or `aspect:` label that a linked issue carries (from `<issue-context>`) and that exists in the label list is a strong signal: prefer it over a weak or absent signal from the commit prefix or the diff, and show it next to the derived guess when the two disagree, so the author can pick.
+
+Infer at most one label per prefix (one `type:`, one `aspect:`); the author can change or add labels in the loop.
 
 If no `type:` label could be inferred, leave the slot empty rather than blocking.
 
@@ -233,7 +235,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/pr-body.md` once now: it defines the form
 
 | Risk | File characteristics |
 | --- | --- |
-| **Critical** | Auth/security logic, core business rules, data models, DB migrations |
+| **Critical** | Auth/security logic, core business rules, data models, DB migrations, and the deletion of a file of one of these kinds |
 | **Medium** | Service methods, DTOs, state management, API contracts, CI/CD workflows (`.github/workflows/*`); default for unrecognized files |
 | **Low** | Tests, renaming, styling/templates, README, config files |
 
@@ -269,7 +271,9 @@ Store the derived sections as `<file-risk>`.
 
 Derive the title from the branch context gathered in Step 1 (commit messages, branch name, changed files, diff), `<issue-context>` from Step 2, and `<codeql-context>` from Step 3.
 
-Determine the dominant conventional commit type and summary by weighing all signals together — commit message(s) (whether one or many), commit prefix counts, what the changed files and diff content actually show, and any type/slug/qualifier embedded in the branch name. No single signal automatically wins (e.g. a single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone; extra details from the branch name could provide additional context, when present). Construct `<type>: <summary>`.
+Determine the dominant conventional commit type and summary by weighing all signals together: the commit messages, the commit prefix counts, what the changed files and the diff actually show, and any type, slug or qualifier in the branch name.
+
+No single signal automatically wins. A single substantial `feat:` commit alongside several trivial `chore:` commits should not lose to `chore:` on count alone, and details from the branch name only add context. Construct `<type>: <summary>`.
 
 No clear dominant type even after weighing all signals → fall back to the `type:` label from `<selected-labels>` (Step 4), mapped back to a commit type with the table of Step 4. If no `type:` label was selected, or the selected label has no row in the table, leave `<title>` empty: an empty `<title>` is the placeholder that needs author input, surfaced as missing in the Step 7 preview. Never write anything else in its place (no `TODO`, no `<type>: <summary>`).
 
@@ -286,7 +290,7 @@ Derive a combined "What" and "Why" from the branch context gathered in Step 1 (c
 
 Write both as `pr-body.md` describes.
 
-Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, decide this explicitly rather than defaulting. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is the justification, written as `pr-body.md` describes.
+Also decide `<merge-danger>` from the same context and `<file-risk>` from Step 5. The default is **two-way**: reverting the PR undoes the change. Only call it **one-way** when the change is destructive or cannot be undone by reverting the PR — data loss, a schema change old code can't read, a removed or changed public API or contract, or external side effects once deployed. If Step 5 put a migration, deletion, or public-contract file in Critical, check the one-way criteria above against that file before settling on two-way. Two-way → `<merge-danger>` stays empty. One-way → `<merge-danger>` is the justification, written as `pr-body.md` describes.
 
 Assemble `<body>` from the sections in `pr-body.md`, in the order given there: What and Why from above, `<file-risk>` from Step 5, then Merge danger from `<merge-danger>`, Closes from `<closes>` and PR checklist from `<pr-checklist>`, each of the last three omitted when its value is empty. Follow the skeleton there exactly.
 
@@ -294,7 +298,7 @@ Default `<draft-state>` to "Ready for review". It has exactly two values, "Draft
 
 #### Combined preview and confirmation loop
 
-Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. Show the notes kept in Step 4 as well (a dropped label, a missing `type:` label, a `type: deployment` conflict). If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If the Step 1 checklist script reported `unusable`, also call this out explicitly (e.g. "Note: this repo's CLAUDE.md has a PR merge checklist heading, but its table couldn't be read — no checklist section was added") — informational only, it doesn't block "Looks good, create it."
+Render `<title>`, `<selected-labels>`, the full `<body>` (What/Why + File risk + Merge danger + Closes + PR checklist), and `<draft-state>` together as one combined preview. If `<title>` is empty (show it as "(missing, needs your input)") or fails conventional commit format, or if no `type:` label was inferred, call this out explicitly in the preview rather than silently presenting it as final. Show the notes kept in Step 4 as well (a dropped label, a missing `type:` label, a `type: deployment` conflict). If `<merge-danger>` is empty, add the one-line note "Merge danger: two-way (section omitted)" to the preview so the author can tell it was considered — preview only, never part of `<body>`. If `<checklist-state>` is `unusable`, show the note kept in Step 1 as well — informational only, it doesn't block "Looks good, create it."
 
 Ask with `AskUserQuestion` (single-select):
 
