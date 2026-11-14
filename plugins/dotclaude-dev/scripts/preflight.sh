@@ -42,7 +42,7 @@ main() {
   username=$OUT
   run_gh "repository $remote_url" repo view "$remote_url" --json url,nameWithOwner,defaultBranchRef
   repo=$OUT
-  default_branch=$(printf '%s' "$repo" | jq -r '.defaultBranchRef.name // empty') ||
+  default_branch=$(printf '%s' "$repo" | jq -r '.defaultBranchRef.name // empty' 2> /dev/null) ||
     die "repository $remote_url" "Cannot read the repository returned by gh."
   [[ -n $default_branch ]] || die "repository $remote_url" "The repository has no default branch."
   [[ $skill != create-pr || $branch != "$default_branch" ]] ||
@@ -52,7 +52,7 @@ main() {
   json=$(printf '%s' "$repo" | jq -c --arg skill "$skill" --arg remote "$remote" --arg remoteUrl "$remote_url" --arg host "$host" \
     --arg username "$username" --arg prDir "$dir" --arg defaultBranch "$default_branch" --arg branch "$branch" --arg remoteBranch "$remote_branch" \
     '{skill: $skill, remote: $remote, remoteUrl: $remoteUrl, host: $host, username: $username, repoUrl: .url, repoPath: .nameWithOwner, defaultBranch: $defaultBranch, prDir: $prDir}
-      + (if $skill == "create-pr" then {branch: $branch, remoteBranch: $remoteBranch} else {} end)') ||
+      + (if $skill == "create-pr" then {branch: $branch, remoteBranch: $remoteBranch} else {} end)' 2> /dev/null) ||
     die "repository $remote_url" "Cannot read the repository returned by gh."
   write_file "$dir" preflight.json "$json"
   printf '%s\n' "$json"

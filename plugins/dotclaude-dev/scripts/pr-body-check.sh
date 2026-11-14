@@ -19,7 +19,7 @@ main() {
   here=$(dirname "${BASH_SOURCE[0]}")
   [[ -f $dir/body.txt ]] || die "body.txt" "Folder $dir has no body.txt. Write the body first."
   [[ -f $dir/file-table.json ]] || die "file-table.json" "Folder $dir has no file-table.json. Run branch-diff.sh files first."
-  parsed=$(jq -Rs -f "$here/pr-body-parse.jq" "$dir/body.txt") || die "body.txt" "Cannot read the body in $dir/body.txt."
+  parsed=$(jq -Rs -f "$here/pr-body-parse.jq" "$dir/body.txt" 2> /dev/null) || die "body.txt" "Cannot read the body in $dir/body.txt."
   printf '%s' "$parsed" | jq -c --argjson table "$(cat "$dir/file-table.json")" -f "$here/pr-body-coverage.jq" 2> /dev/null ||
     die "file-table.json" "Cannot read the file table in $dir/file-table.json."
   return 0

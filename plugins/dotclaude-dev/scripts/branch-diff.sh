@@ -58,7 +58,7 @@ cmd_files() {
   # one call per folder: the script never deletes, so a second call would mix its files with the first run's
   [[ ! -e $dir/diff ]] || die "diff folder" "Folder $dir already has diff/. Every run gets its own folder from preflight.sh, so $(rerun)."
   set_range "$remote" "$base"
-  mkdir "$dir/diff" || die "diff folder" "Cannot create $dir/diff."
+  mkdir "$dir/diff" 2> /dev/null || die "diff folder" "Cannot create $dir/diff."
   top=$(run_git "repository root" rev-parse --show-toplevel) || exit $?
   # the changed-file list holds NUL bytes, which a shell variable cannot, so it goes through a file in the folder
   listing="$dir/changed-files.list"
@@ -88,10 +88,10 @@ cmd_files() {
       {path: $path, renamedFrom: (if $old == "" then null else $old end),
        added: (if $added == "-" then null else ($added | tonumber) end),
        removed: (if $removed == "-" then null else ($removed | tonumber) end),
-       generated: ($generated == "yes"), diff: (if $diff == "" then null else $diff end)}') || die "table entry of $path" "Cannot build the table entry."
+       generated: ($generated == "yes"), diff: (if $diff == "" then null else $diff end)}' 2> /dev/null) || die "table entry of $path" "Cannot build the table entry."
     entries+=$entry$'\n'
   done < "$listing"
-  table=$(printf '%s' "$entries" | jq -sc '.') || die "file table" "Cannot build the file table."
+  table=$(printf '%s' "$entries" | jq -sc '.' 2> /dev/null) || die "file table" "Cannot build the file table."
   write_file "$dir" file-table.json "$table"
   printf '%s\n' "$table"
   return 0
