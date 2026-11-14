@@ -1874,7 +1874,7 @@ expect_error "pr-refs/usage: two arguments" 2 usage false
 
 # ---- skills: the failure rule for script calls is worded the same ----
 
-rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. A stderr without such a line is shown as it is.'
+rule='Non-zero exit → stop with the `message` of the JSON line the script wrote to stderr, unless a step says otherwise. This holds for every script call in this skill. If stderr has no such line, stop with its first line; if stderr is empty too, stop with "`<script>` failed without a message (exit code `<n>`)."'
 for skill in create-pr review-pr; do
   if grep -qF -- "$rule" "$root/plugins/dotclaude-dev/skills/$skill/SKILL.md"; then
     report "skills/$skill states the failure rule" ok
@@ -2032,6 +2032,17 @@ if grep -qF '| `test`, `ci`, `build`, `style` | `type: chore` |' "$create_skill"
   report "skills/create-pr one table maps commit types and labels in both directions" ok
 else
   report "skills/create-pr one table maps commit types and labels in both directions" fail "table row or the backward use in Step 6 missing, or the old inline mapping is left"
+fi
+
+# one vocabulary for stop, skip and warning in both skills; a stop message is a quoted block, a warning starts with the literal
+words_rows='| stop | End the run. Print only the message, as a blockquote. |
+| skip | End the run without an error (the PR is out of scope). Print only the message, as a blockquote. |
+| warning | Print one line that starts with "Warning: " and continue. |'
+if grep -qF -- "$words_rows" "$create_skill" && grep -qF -- "$words_rows" "$review_skill" &&
+  ! grep -qF 'No review scope selected."' <(grep -v '^  > ' "$review_skill") && ! grep -qE 'shown as it is|go on without' "$create_skill" "$review_skill"; then
+  report "skills: both skills define stop, skip and warning the same and use them" ok
+else
+  report "skills: both skills define stop, skip and warning the same and use them" fail "vocabulary rows differ, an inline stop message or an old phrase is left"
 fi
 
 # ---- skills: manual-only, so the model never starts them from a loose description match ----
