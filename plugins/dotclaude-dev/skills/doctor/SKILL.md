@@ -16,15 +16,15 @@ Each invocation is independent: re-run every Step 1 check live, even if this ski
 
 Run every check below and store each result before moving to Step 2. No fixing yet, no output yet.
 
-**Plugins** — run `claude plugin list --json` once and reuse its output for every plugin below (never once per plugin). If the command fails or its output is not a JSON array, every plugin gets the status `unknown`: nothing is fixed in Step 2, and Step 3 reports "Could not read the plugin list" followed by the first line of its stderr. Otherwise it returns a JSON array of entries with an `id`, a `scope` and a boolean `enabled`. Look up each `id`: no entry → `missing`; one entry → `enabled` or `disabled` by its `enabled` field; several entries for the same `id` (one per scope) → the first entry in this order decides: managed, local, project, user.
+**Plugins** — run `claude plugin list --json` once and reuse its output for every plugin below (never once per plugin). If the command fails or its output is not a JSON array, every plugin gets the status `unknown`: nothing is fixed in Step 2, and Step 3 reports "Could not read the plugin list" followed by the first line of its stderr. Otherwise it returns a JSON array of entries with an `id`, a `scope` and a boolean `enabled`. Look up each plugin by its `id` or any of its given alternative IDs: no entry → `missing`; one entry → `enabled` or `disabled` by its `enabled` field; several entries for the plugin (one per scope or ID) → the first entry in this order decides: managed, local, project, user.
 
-| Plugin | Category |
-| --- | --- |
-| `dotclaude-dev@jfandy1982-dotclaude` | self |
-| `superpowers@claude-plugins-official` | mandatory |
-| `feature-dev@claude-plugins-official` | mandatory |
-| `pr-review-toolkit@claude-plugins-official` | mandatory |
-| `ponytail@ponytail` | optional |
+| Plugin | Alternative IDs | Category |
+| --- | --- | --- |
+| `dotclaude-dev@jfandy1982-dotclaude` |  | self |
+| `superpowers@claude-plugins-official` | `superpowers@anthropic-plugin-directory` | mandatory |
+| `feature-dev@claude-plugins-official` |  | mandatory |
+| `pr-review-toolkit@claude-plugins-official` |  | mandatory |
+| `ponytail@ponytail` |  | optional |
 
 `dotclaude-dev` can only ever resolve to `enabled` — if this skill is running, its own plugin is installed and enabled.
 
@@ -66,8 +66,8 @@ Per plugin, the question is "`<plugin>` is not installed. Install it?" (options 
 
 Then, for each confirmed plugin, run via the Bash tool — always with `--json`, never plain, never piped:
 
-- `missing` → `claude plugin install <plugin> --yes --json`
-- `disabled` → `claude plugin enable <plugin> --json`
+- `missing` → `claude plugin install <plugin> --yes --json` (the ID from the first column)
+- `disabled` → `claude plugin enable <id> --json` (the `id` of the entry found in Step 1)
 
 Ignore the exit code; it is unreliable for both commands. Parse the JSON's `outcome` field instead: `"ok"` records `fixed`, anything else records `fix-failed` and surfaces the JSON's `message` verbatim. When that message says the marketplace is unknown or not found, add one hint: the marketplace of the plugin must be added first (`/plugin marketplace add`). A plugin left unconfirmed records `skipped` and runs no command.
 

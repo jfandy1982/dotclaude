@@ -42,7 +42,7 @@ Each run of `create-pr` or `review-pr` works in a new folder under `$TMPDIR/dotc
 
 Run `/dotclaude-dev:doctor` inside the repository you want to use: it checks everything below and offers to fix plugin gaps.
 
-- **Plugins (mandatory):** `superpowers@claude-plugins-official`, `feature-dev@claude-plugins-official`, `pr-review-toolkit@claude-plugins-official`.
+- **Plugins (mandatory):** `superpowers@claude-plugins-official` (alternative ID `superpowers@anthropic-plugin-directory` accepted as well), `feature-dev@claude-plugins-official`, `pr-review-toolkit@claude-plugins-official`.
 - **Plugin (optional):** `ponytail@ponytail`.
 - **CLI tools:** `git`, `gh` and `jq`.
 - **GitHub login:** `gh` must be logged in on the host of your repository (`gh auth login --hostname <host>`).
