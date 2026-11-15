@@ -66,7 +66,7 @@ Per plugin, the question is "`<plugin>` is not installed. Install it?" (options 
 
 Then, for each confirmed plugin, run via the Bash tool — always with `--json`, never plain, never piped:
 
-- `missing` → `claude plugin install <plugin> --scope user --yes --json` (the ID from the first column; always user scope, never local or project)
+- `missing` → `claude plugin install <plugin> --scope user --yes --json` (the ID from the first column)
 - `disabled` → `claude plugin enable <id> --json` (the `id` of the entry found in Step 1)
 
 Ignore the exit code; it is unreliable for both commands. Parse the JSON's `outcome` field instead: `"ok"` records `fixed`, anything else records `fix-failed` and surfaces the JSON's `message` verbatim. When that message says the marketplace is unknown or not found, add one hint: the marketplace of the plugin must be added first (`/plugin marketplace add`). A plugin left unconfirmed records `skipped` and runs no command.
@@ -90,6 +90,8 @@ followed — only when an optional plugin or env var is not clean (`disabled`/`m
 Omit that block entirely when every optional item is clean. When the GitHub login was `not-checked`, add one line below: "GitHub login not checked: <reason>." with the reason from Step 1.
 
 Otherwise, show the full itemized breakdown: one line per check, grouped by category, with ✔/✘ markers, including any `fix-failed` message from Step 2 and the "Could not read the plugin list" message when the plugin list was `unknown`. A `not-checked` login gets a `–` marker and its reason; a `not-logged-in` login gets ✘ and the line "Run `gh auth login --hostname <host>`."
+
+When Step 2 recorded at least one plugin as `fixed`, end the report — in either form — with the line "Run `/reload-plugins` to activate the changes." The doctor cannot run that built-in command itself.
 
 ## Maintenance
 
