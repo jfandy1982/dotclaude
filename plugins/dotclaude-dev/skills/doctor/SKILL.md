@@ -66,7 +66,7 @@ Per plugin, the question is "`<plugin>` is not installed. Install it?" (options 
 
 Then, for each confirmed plugin, run via the Bash tool — always with `--json`, never plain, never piped:
 
-- `missing` → `claude plugin install <plugin> --yes --json` (the ID from the first column)
+- `missing` → `claude plugin install <plugin> --scope user --yes --json` (the ID from the first column; always user scope, never local or project)
 - `disabled` → `claude plugin enable <id> --json` (the `id` of the entry found in Step 1)
 
 Ignore the exit code; it is unreliable for both commands. Parse the JSON's `outcome` field instead: `"ok"` records `fixed`, anything else records `fix-failed` and surfaces the JSON's `message` verbatim. When that message says the marketplace is unknown or not found, add one hint: the marketplace of the plugin must be added first (`/plugin marketplace add`). A plugin left unconfirmed records `skipped` and runs no command.
