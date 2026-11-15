@@ -2,5 +2,9 @@
   "name": "dotclaude-dev",
   "description": "Opinionated software-development skills for Claude Code",
   "version": "0.6.0",
-  "author": { "name": "jfandy1982" }
+  "author": { "name": "jfandy1982" },
+  "homepage": "https://github.com/jfandy1982/dotclaude/tree/main/plugins/dotclaude-dev#readme",
+  "repository": "https://github.com/jfandy1982/dotclaude",
+  "license": "MIT",
+  "keywords": ["skills", "pull-request", "code-review", "workflow", "github"]
 }
